@@ -1,0 +1,7 @@
+Hi TRG Admin,
+
+A new user has completed account activation.
+
+Name: [User]
+
+Please log in to the system for more details.

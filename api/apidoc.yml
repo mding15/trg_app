@@ -1,0 +1,183 @@
+swagger: '2.0'
+info:
+  title: "Tail Risk Global API"
+  description: "This API allows users to interact with TRG risk engine"
+  version: "1.0.0"
+
+paths:
+  /api/login:
+    post:
+      tags:
+        - Authentication
+      summary: "User Login"
+      description: "Allows users to obtain a JWT token by providing a username and password."
+      consumes:
+        - application/json
+      parameters:
+        - in: body
+          name: body
+          description: The user's username and password
+          required: true
+          schema:
+            type: object
+            required:
+              - username
+              - password
+            properties:
+              username:
+                type: string
+                example: user123
+              password:
+                type: string
+                example: password123
+      responses:
+        200:
+          description: Login successful, returns JWT token.
+          schema:
+            type: object
+            properties:
+              token:
+                type: string
+                example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyIjoidXNlcjEyMyIsImV4cCI6MTYzMzU2Nzg2NX0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c
+        401:
+          description: Invalid username or password.
+
+  /api/register:
+    post:
+      tags:
+        - Registration
+      summary: "User Registration"
+      description: "Create a new account in database"
+      consumes:
+        - application/json
+      parameters:
+        - in: body
+          name: body
+          description: "User information: first name, last name, email, company name"
+          required: true
+          schema:
+            type: object
+            required:
+              - email
+              - companyName
+            properties:
+              firstName:
+                type: string
+                example: John
+              lastName:
+                type: string
+                example: Smith
+              email:
+                type: string
+                example: "jsmith@trg.com"
+              companyName:
+                type: string
+                example: Tail Risk Global 
+      responses:
+        200:
+          description: Register success
+          schema:
+            type: object
+            properties:
+              message:
+                type: string
+                example: register success
+        402:
+          description: invalid email, email exists in database 
+
+  /api/upload_portfolio:
+    post:
+      tags:
+        - Upload Portfolio
+      summary: "Upload file"
+      description: "Upload a portfolio Excel file and create a entry in database"
+      consumes:
+        - multipart/form-data
+      produces:
+        - application/json
+      parameters:
+        - name: token
+          in: query
+          required: true
+          type: string
+          description: "Authorization token required to upload the file."
+        - name: file
+          in: formData
+          required: true
+          type: file
+          description: "Excel file containing portfolio data to upload."
+      responses:
+        200:
+          description: "File uploaded successfully."
+          schema:
+            type: object
+            properties:
+              message:
+                type: string
+                example: "upload success"
+        401:
+          description: "Unauthorized. Invalid or missing token."
+        402:
+          description: "invalid email, email exists in database"
+        500:
+          description: "Server error."
+
+  /api/get_dashboard:
+    post:
+      summary: "Get Dashboard Data"
+      description: "Fetches dashboard data, including portfolio details and risk metrics."
+      parameters:
+        - name: token
+          in: query
+          required: true
+          type: string
+          description: "Authorization token required to access the dashboard data."
+        - name: body
+          in: body
+          required: true
+          schema:
+            type: object
+            description: "Empty JSON object is expected in the body for this request."
+      produces:
+        - application/json
+      responses:
+        200:
+          description: "Successful response with dashboard data."
+          schema:
+            type: object
+            properties:
+              TableData:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    As of Date:
+                      type: string
+                      format: date
+                      example: "2024-06-30"
+                    Create By:
+                      type: string
+                      example: "Michael Ding"
+                    Create Date:
+                      type: string
+                      format: date
+                      example: "2024-11-02"
+                    Market Value:
+                      type: string
+                      example: "$ 1,000,000.00"
+                    Portfolio Name:
+                      type: string
+                      example: "G0 - Model 2"
+                    Risk Horizon:
+                      type: string
+                      example: "1 Month"
+                    Status:
+                      type: string
+                      example: "pending"
+                    Tail Measure:
+                      type: string
+                      example: "95% TailVaR"
+        401:
+          description: "Unauthorized. Invalid or missing token."
+        500:
+          description: "Server error."

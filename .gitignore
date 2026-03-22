@@ -1,0 +1,9 @@
+__pycache__/
+_norton_/
+logs/
+output/
+test_env.py
+*.log
+*.tmp
+*.bak
+

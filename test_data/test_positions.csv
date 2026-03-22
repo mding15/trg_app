@@ -1,0 +1,4 @@
+PositionID,SecurityName,SecurityID,ProductType,AssetClass,Quantity,Price,PriceDate,MarketValue
+1,Security 1,T00001,STOCK,Equity,6300.0,77.79,2024-02-28,490077.00000000006
+2,Security 2,T00002,STOCK,Equity,6300.0,65.49,2024-02-28,412586.99999999994
+3,Security 3,T00003,STOCK,Equity,8600.0,5.59,2024-02-28,48074.0

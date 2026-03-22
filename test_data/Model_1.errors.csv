@@ -1,0 +1,11 @@
+Your input file has errors!
+
+The Parameter tab has the following errors:
+Parameters: Tail Measure: "95% TailVaRx" invalid value
+Parameters: Return Frequency: "Dailyx" invalid value
+
+The Position has the following errors:
+Unknown Securities:
+SecurityName,ISIN,CUSIP,Ticker,Quantity,MarketValue,Weight,ExpectedReturn,AssetClass,AssetType,LastPrice,LastPriceDate,Currency,Country,Region,Sector,Industry,OptionType,FrequencyMonths,MaturityDate,OptionStrike,UnderlyingSecurityID,CouponRate,Class,SC1,SC2,SecurityID
+Vaneck Wide Moat ETF,US92189F6438x,,CSTNLx,3133.22467892526,250000.0,0.025,0.044,Equity,Equity ETF,79.7900009155273,2023-06-30,USD,United States,North America,Energy,Energy Equipment & Services,,,,,,,Equity,Equity ETF,US Equity,
+iShares Core S&P 500 UCITS ETF USD,IE00B5BMR087x,,LOMIZx,540.13178503467,250000.0,0.025,0.044,Equity,Equity ETF,462.850006103515,2023-06-30,USD,United States,North America,Energy,"Oil, Gas & Consumable Fuels",,,,,,,Equity,Equity ETF,US Equity,

@@ -1,0 +1,15 @@
+Hello [User],
+
+Thank you for signing up for our service. Please activate your account by clicking the button below:
+
+[activation-link]
+
+Have questions or need assistance? 
+Reach out to our support team at support@tailriskglobal.com
+
+Thank you for choosing Tail Risk Global. We look forward to supporting your journey in portfolio risk management!
+
+Best regards,
+
+The Tail Risk Global Team
+www.tailriskglobal.com

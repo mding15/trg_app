@@ -1,0 +1,9 @@
+INSTALLATION
+
+1. instal Anaconda 
+
+2. install xlwings
+	conda install xlwings
+
+3. install Excel addin (close all Excel books)
+	xlwings addin install

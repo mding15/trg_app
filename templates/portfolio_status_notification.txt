@@ -1,0 +1,22 @@
+Portfolio Status Alert
+
+Support Team,
+
+A portfolio status has changed and requires your attention. Below are the details:
+
+Portfolio ID: [PortfolioID]
+Portfolio Name: [PortfolioName]
+User ID: [UserID]
+User Name: [UserName]
+Status: [Status]
+Time: [Timestamp]
+
+Error Message:
+[ErrorMessage]
+
+Action Required: Please investigate this portfolio issue and take appropriate action.
+
+Best regards,
+
+Tail Risk Global LLC
+info@tailriskglobal.com
