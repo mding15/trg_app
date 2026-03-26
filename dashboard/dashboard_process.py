@@ -37,7 +37,6 @@ from dashboard.positions_db import (
     delete_mv_history,
     delete_portfolio_summary,
     delete_positions,
-    get_mv_history_dates,
     write_mv_history,
     write_portfolio_summary,
     write_positions,
@@ -119,51 +118,5 @@ def run() -> None:
     logger.info("Dashboard process completed.")
 
 
-def backfill_mv_hist() -> None:
-    """
-    Write market values to db_mv_history for all (as_of_date, account_id) pairs
-    in position_var (last 252 dates) that do not already have rows in db_mv_history.
-    """
-    logger.info("Backfill mv_history started")
-
-    with pg_connection() as conn:
-        feed_dates = get_latest_feed_dates(conn, n=252)
-
-    if not feed_dates:
-        logger.warning("No dates found in position_var. Aborting backfill.")
-        return
-
-    logger.info(f"Found {len(feed_dates)} date(s) in position_var.")
-
-    for date in feed_dates:
-        with pg_connection() as conn:
-            account_ids = get_account_ids_on_date(conn, date)
-
-        for account_id in account_ids:
-            existing_dates = get_mv_history_dates(account_id)
-            if date in existing_dates:
-                continue
-
-            with pg_connection() as conn:
-                df = get_positions_on_date(conn, date, account_id)
-
-            if df.empty:
-                logger.warning(f"  {date}  account_id={account_id}  no positions found, skipping.")
-                continue
-
-            mv_rows = _build_mv_rows(df)
-            write_mv_history(account_id, date, mv_rows)
-            logger.info(f"  {date}  account_id={account_id}  wrote {len(mv_rows)} rows to db_mv_history.")
-
-    logger.info("Backfill mv_history completed.")
-
-
-# command:
-#  python dashboard_process.py            # normal daily run
-#  python dashboard_process.py --backfill # backfill missing mv_history dates
 if __name__ == "__main__":
-    import sys
-    if len(sys.argv) > 1 and sys.argv[1] == "--backfill":
-        backfill_mv_hist()
-    else:
-        run()
+    run()

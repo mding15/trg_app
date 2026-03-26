@@ -85,7 +85,7 @@ def login():
 
     try:
         token, user = authenticate()
-        ms_sql_server.wakeup_server()
+        # ms_sql_server.wakeup_server()
         
         resp = make_response(jsonify({
             'token': token,
@@ -519,66 +519,198 @@ swagger.template['info'] = general_info
 # DASHBOARD
 from dashboard.positions import get_positions as _fetch_positions
 from dashboard.positions import get_portfolio_summary as _fetch_portfolio_summary
-from dashboard.static_data import (
-    METRICS, CHART_DATA, PORTFOLIO, RISK, ASSET_ALLOCATION,
-    RISK_SUMMARY_V2, RISK_CONTRIBUTIONS, FACTOR_EXPOSURES_V2,
-    STRESS_SCENARIOS, RISK_ALERTS,
+from dashboard.positions_db import (
+    get_accounts_for_user,
+    user_has_account_access,
+    read_portfolio_summary,
+    read_asset_allocation,
+    read_risk_alerts,
+    count_risk_alerts,
+    read_var_limit,
+    compute_chart_data,
 )
+from dashboard.stress_test import read_stress_results
+from dashboard.static_data import (
+    RISK, RISK_CONTRIBUTIONS, FACTOR_EXPOSURES_V2,
+)
+
+
+def _get_account_id(require_access: bool = True, username: str = None):
+    """Parse account_id from query args and optionally verify access.
+
+    Returns (account_id, error_response) where error_response is None on success.
+    """
+    account_id = request.args.get("account_id", type=int)
+    if account_id is None:
+        return None, (jsonify({"error": "account_id is required"}), 400)
+    if require_access and not user_has_account_access(username, account_id):
+        return None, (jsonify({"error": "Access denied"}), 403)
+    return account_id, None
+
 
 # ── Summary page ──────────────────────────────────────────────────────────────
 
 @app.route("/api/summary/metrics")
 @token_required
 def get_metrics(username):
-    return jsonify(METRICS)
+    account_id, err = _get_account_id(username=username)
+    if err:
+        return err
+    try:
+        data = read_portfolio_summary(account_id)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    return jsonify(data)
+
 
 @app.route("/api/summary/chart/<range_key>")
 @token_required
 def get_chart(username, range_key):
-    data = CHART_DATA.get(range_key.upper(), CHART_DATA["1Y"])
+    account_id, err = _get_account_id(username=username)
+    if err:
+        return err
+    try:
+        data = compute_chart_data(account_id, range_key)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
     return jsonify(data)
+
 
 @app.route("/api/summary/portfolio")
 @token_required
 def get_summary_portfolio(username):
-    return jsonify(PORTFOLIO)
+    account_id, err = _get_account_id(username=username)
+    if err:
+        return err
+    try:
+        rows = read_asset_allocation(account_id)
+        # Portfolio table view: asset class breakdown with returns and VaR
+        data = [
+            {
+                "assetClass":   r["assetClass"],
+                "marketValue":  r["marketValue"],
+                "weight":       r["weight"],
+                "periodReturn": r["periodReturn"],
+                "varContrib":   r["varContrib"],
+            }
+            for r in rows
+        ]
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    return jsonify(data)
+
 
 @app.route("/api/summary/risk")
 @token_required
 def get_summary_risk(username):
+    # RISK bar chart remains static until redesign
     return jsonify(RISK)
+
 
 @app.route("/api/summary/allocation")
 @token_required
 def get_allocation(username):
-    return jsonify(ASSET_ALLOCATION)
+    account_id, err = _get_account_id(username=username)
+    if err:
+        return err
+    try:
+        rows = read_asset_allocation(account_id)
+        # Allocation chart view: portfolio vs benchmark weights
+        data = [
+            {
+                "assetClass": r["assetClass"],
+                "weight":     r["weight"],
+                "bmkWeight":  r["bmkWeight"],
+            }
+            for r in rows
+        ]
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    return jsonify(data)
+
 
 # ── Risk page ─────────────────────────────────────────────────────────────────
 
 @app.route("/api/risk/summary")
 @token_required
 def get_risk_summary(username):
-    return jsonify(RISK_SUMMARY_V2)
+    account_id, err = _get_account_id(username=username)
+    if err:
+        return err
+    try:
+        ps = read_portfolio_summary(account_id)
+        if not ps:
+            return jsonify({}), 200
+        data = {
+            "var1d95":      ps.get("var1d95"),
+            "var1d95Pct":   ps.get("var1d95Pct"),
+            "var1d99":      ps.get("var1d99"),
+            "var1d99Pct":   ps.get("var1d99Pct"),
+            "var10d99":     ps.get("var10d99"),
+            "var10d99Pct":  ps.get("var10d99Pct"),
+            "es1d95":       ps.get("es1d95"),
+            "es1d95Pct":    ps.get("es1d95Pct"),
+            "es99":         ps.get("es99"),
+            "es99Pct":      ps.get("es99Pct"),
+            "volatility":   ps.get("volatility"),
+            "sharpe":       ps.get("sharpe"),
+            "beta":         ps.get("beta"),
+            "maxDrawdown":  ps.get("maxDrawdown"),
+            "topFiveConc":  ps.get("topFiveConc"),
+            "varLimitPct":  read_var_limit(account_id),
+            "activeAlerts": count_risk_alerts(account_id),
+        }
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    return jsonify(data)
+
 
 @app.route("/api/risk/contributions")
 @token_required
 def get_risk_contributions(username):
+    # Remains static until redesign
     return jsonify(RISK_CONTRIBUTIONS)
+
 
 @app.route("/api/risk/factors")
 @token_required
 def get_risk_factors(username):
+    # Remains static until redesign
     return jsonify(FACTOR_EXPOSURES_V2)
+
 
 @app.route("/api/risk/stress")
 @token_required
 def get_risk_stress(username):
-    return jsonify(STRESS_SCENARIOS)
+    account_id, err = _get_account_id(username=username)
+    if err:
+        return err
+    try:
+        data = read_stress_results(account_id)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    return jsonify(data)
+
 
 @app.route("/api/risk/alerts")
 @token_required
 def get_risk_alerts(username):
-    return jsonify(RISK_ALERTS)
+    account_id, err = _get_account_id(username=username)
+    if err:
+        return err
+    try:
+        data = read_risk_alerts(account_id)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    return jsonify(data)
+
+# ── Accounts ──────────────────────────────────────────────────────────────────
+
+@app.route("/api/accounts")
+@token_required
+def get_accounts(username):
+    accounts = get_accounts_for_user(username)
+    return jsonify(accounts)
 
 # ── Portfolio page ────────────────────────────────────────────────────────────
 
@@ -586,7 +718,12 @@ def get_risk_alerts(username):
 @token_required
 def get_portfolio_summary(username):
     try:
-        summary = _fetch_portfolio_summary(username)
+        account_id = request.args.get("account_id", type=int)
+        if account_id is None:
+            return jsonify({"error": "account_id is required"}), 400
+        if not user_has_account_access(username, account_id):
+            return jsonify({"error": "Access denied"}), 403
+        summary = _fetch_portfolio_summary(account_id)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
     return jsonify(summary)
@@ -595,7 +732,12 @@ def get_portfolio_summary(username):
 @token_required
 def get_positions(username):
     try:
-        positions = _fetch_positions(username)
+        account_id = request.args.get("account_id", type=int)
+        if account_id is None:
+            return jsonify({"error": "account_id is required"}), 400
+        if not user_has_account_access(username, account_id):
+            return jsonify({"error": "Access denied"}), 403
+        positions = _fetch_positions(account_id)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
     return jsonify(positions)

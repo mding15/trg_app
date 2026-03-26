@@ -6,6 +6,8 @@ Reads historical market values from db_mv_history (for return calculations).
 """
 from __future__ import annotations
 
+import math
+
 import pandas as pd
 import psycopg2.extras
 
@@ -130,7 +132,22 @@ def pct_return_total(current: float, base: float | None) -> float | None:
 def compute_portfolio_summary(account_id: int) -> dict:
     """
     Compute portfolio-level summary for account_id.
-    Current AUM comes from position_var; returns are calculated from db_mv_history.
+    Current AUM and risk metrics come from position_var;
+    return metrics are calculated from db_mv_history.
+
+    Risk metric formulas:
+        var_1d_95  = SUM(marginal_var)
+        var_1d_99  = var_1d_95 * 1.41
+        var_10d_99 = var_1d_99 * sqrt(10)
+        es_1d_95   = SUM(marginal_tvar)
+        es_99      = es_1d_95 * 1.41
+        volatility = SUM(marginal_std) / aum * sqrt(252)  [stored as %]
+        total_ret  = SUM(market_value * expected_return) / aum
+        sharpe     = total_ret / volatility_ratio
+        beta       = 1.2  [hardcoded placeholder]
+        max_drawdown = -12.5  [hardcoded placeholder, %]
+        unrealized_gain = aum * 10%  [placeholder]
+        top_five_conc = top-5 security MV / aum * 100  [%]
     """
     with pg_connection() as conn:
         dates = get_latest_feed_dates(conn, n=1)
@@ -142,6 +159,7 @@ def compute_portfolio_summary(account_id: int) -> dict:
         first_of_year  = latest.replace(month=1, day=1)
         one_year_ago   = latest.replace(year=latest.year - 1)
 
+        # AUM and position count
         with conn.cursor() as cur:
             cur.execute(
                 """
@@ -154,6 +172,38 @@ def compute_portfolio_summary(account_id: int) -> dict:
             count, aum_raw = cur.fetchone()
         aum = float(aum_raw) if aum_raw is not None else 0.0
 
+        # Risk aggregates from position_var
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT SUM(marginal_var),
+                       SUM(marginal_tvar),
+                       SUM(marginal_std),
+                       SUM(market_value * expected_return)
+                FROM position_var
+                WHERE as_of_date = %s AND account_id = %s
+                """,
+                (latest, account_id),
+            )
+            risk_row = cur.fetchone()
+        sum_mvar, sum_mtvar, sum_mstd, sum_mv_er = risk_row if risk_row else (None, None, None, None)
+
+        # Top-5 concentration (group by security_id, take highest 5 MVs)
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT SUM(market_value) AS mv
+                FROM position_var
+                WHERE as_of_date = %s AND account_id = %s
+                GROUP BY security_id
+                ORDER BY mv DESC
+                LIMIT 5
+                """,
+                (latest, account_id),
+            )
+            top5_mvs = [float(r[0]) for r in cur.fetchall() if r[0] is not None]
+
+        # Historical reference AUMs for return calculations
         prev = prev_date_from_history(conn, account_id, latest)
 
         prev_aum   = total_mv_from_history(conn, account_id, prev)           if prev else None
@@ -161,18 +211,58 @@ def compute_portfolio_summary(account_id: int) -> dict:
         ytd_aum    = total_mv_from_history(conn, account_id, first_of_year)
         one_yr_aum = total_mv_from_history(conn, account_id, one_year_ago)
 
-        day_pnl = round(aum - prev_aum, 2) if prev_aum is not None else None
+    day_pnl = round(aum - prev_aum, 2) if prev_aum is not None else None
 
-        return {
-            "asOfDate":      latest.strftime("%Y-%m-%d"),
-            "aum":           round(aum, 2),
-            "numPositions":  int(count) if count else 0,
-            "dayPnL":        day_pnl,
-            "dayReturn":     pct_return_total(aum, prev_aum),
-            "mtdReturn":     pct_return_total(aum, mtd_aum),
-            "ytdReturn":     pct_return_total(aum, ytd_aum),
-            "oneYearReturn": pct_return_total(aum, one_yr_aum),
-        }
+    # ── VaR / ES ────────────────────────────────────────────────────────────────
+    var_1d_95  = round(float(sum_mvar),  2) if sum_mvar  is not None else None
+    var_1d_99  = round(var_1d_95 * 1.41, 2) if var_1d_95  is not None else None
+    var_10d_99 = round(var_1d_99 * math.sqrt(10), 2) if var_1d_99 is not None else None
+    es_1d_95   = round(float(sum_mtvar), 2) if sum_mtvar is not None else None
+    es_99      = round(es_1d_95  * 1.41, 2) if es_1d_95  is not None else None
+
+    # ── Volatility & Sharpe ─────────────────────────────────────────────────────
+    if sum_mstd is not None and aum > 0:
+        vol_ratio  = float(sum_mstd) / aum * math.sqrt(252)   # decimal, e.g. 0.15
+        volatility = round(vol_ratio * 100, 4)                 # stored as %, e.g. 15.0
+    else:
+        vol_ratio  = None
+        volatility = None
+
+    if sum_mv_er is not None and aum > 0:
+        total_return = float(sum_mv_er) / aum                  # decimal
+    else:
+        total_return = None
+
+    if total_return is not None and vol_ratio:
+        sharpe = round(total_return / vol_ratio, 4)
+    else:
+        sharpe = None
+
+    # ── Other metrics ───────────────────────────────────────────────────────────
+    unrealized_gain = round(aum * 0.10, 2) if aum else None
+    top_five_conc   = round(sum(top5_mvs) / aum * 100, 2) if aum > 0 else None
+
+    return {
+        "asOfDate":       latest.strftime("%Y-%m-%d"),
+        "aum":            round(aum, 2),
+        "numPositions":   int(count) if count else 0,
+        "dayPnL":         day_pnl,
+        "dayReturn":      pct_return_total(aum, prev_aum),
+        "mtdReturn":      pct_return_total(aum, mtd_aum),
+        "ytdReturn":      pct_return_total(aum, ytd_aum),
+        "oneYearReturn":  pct_return_total(aum, one_yr_aum),
+        "unrealizedGain": unrealized_gain,
+        "var1d95":        var_1d_95,
+        "var1d99":        var_1d_99,
+        "var10d99":       var_10d_99,
+        "es1d95":         es_1d_95,
+        "es99":           es_99,
+        "volatility":     volatility,
+        "sharpe":         sharpe,
+        "beta":           1.2,
+        "maxDrawdown":    -12.5,
+        "topFiveConc":    top_five_conc,
+    }
 
 
 def compute_positions(account_id: int) -> list[dict]:

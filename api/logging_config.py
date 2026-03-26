@@ -16,7 +16,7 @@ logfile = config['LOG_DIR']  / f"api.{ts}.log"
 
 # Configure the root logger
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=logging.DEBUG if config['DEBUG'] else logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
         # logging.StreamHandler(sys.stdout),  # Logs to stdout

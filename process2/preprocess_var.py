@@ -56,7 +56,7 @@ def build_params(as_of_date) -> dict:
     return {
         'AsofDate':        as_of_date,
         'ReportDate':      as_of_date,
-        'RiskHorizon':     '1 Month',
+        'RiskHorizon':     '1 Day',
         'TailMeasure':     '95% TailVaR',
         'ReturnFrequency': 'Daily',
         'Benchmark':       'BM_60_40',

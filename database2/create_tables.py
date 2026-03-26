@@ -48,6 +48,17 @@ def create_tables() -> None:
                     mtd_return      FLOAT,
                     ytd_return      FLOAT,
                     one_year_return FLOAT,
+                    unrealized_gain  FLOAT,
+                    var_1d_95        FLOAT,
+                    var_1d_99        FLOAT,
+                    var_10d_99       FLOAT,
+                    es_1d_95         FLOAT,
+                    es_99            FLOAT,
+                    volatility       FLOAT,
+                    sharpe           FLOAT,
+                    beta             FLOAT,
+                    max_drawdown     FLOAT,
+                    top_five_conc    FLOAT,
                     updated_at      TIMESTAMP NOT NULL DEFAULT NOW(),
                     UNIQUE (account_id, as_of_date)
                 )
@@ -179,7 +190,7 @@ def create_tables() -> None:
                 )
             """)
 
-          cur.execute("""
+            cur.execute("""
                 CREATE TABLE IF NOT EXISTS account_access (
                     id SERIAL PRIMARY KEY,
                     account_id INT NOT NULL,
@@ -187,11 +198,99 @@ def create_tables() -> None:
                     updated_at TIMESTAMP NOT NULL DEFAULT NOW()
                 )
             """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS db_asset_allocation (
+                    id             SERIAL PRIMARY KEY,
+                    account_id     INT          NOT NULL,
+                    as_of_date     DATE         NOT NULL,
+                    asset_class    VARCHAR(64)  NOT NULL,
+                    market_value   FLOAT,
+                    weight         FLOAT,
+                    bmk_weight     FLOAT,
+                    period_return  FLOAT,
+                    var_contrib    FLOAT,
+                    updated_at     TIMESTAMP    NOT NULL DEFAULT NOW(),
+                    UNIQUE (account_id, as_of_date, asset_class)
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS scenario_definition (
+                    scenario_id  SERIAL       PRIMARY KEY,
+                    name         VARCHAR(128) NOT NULL,
+                    period       VARCHAR(64),
+                    severity     VARCHAR(16)  NOT NULL,
+                    is_active    BOOLEAN      NOT NULL DEFAULT TRUE
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS account_scenario (
+                    account_id   INT NOT NULL,
+                    scenario_id  INT NOT NULL REFERENCES scenario_definition (scenario_id),
+                    PRIMARY KEY (account_id, scenario_id)
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS db_stress_results (
+                    id           SERIAL PRIMARY KEY,
+                    account_id   INT   NOT NULL,
+                    as_of_date   DATE  NOT NULL,
+                    scenario_id  INT   NOT NULL REFERENCES scenario_definition (scenario_id),
+                    pnl_usd      FLOAT,
+                    pnl_pct      FLOAT,
+                    updated_at   TIMESTAMP NOT NULL DEFAULT NOW(),
+                    UNIQUE (account_id, as_of_date, scenario_id)
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS db_risk_alerts (
+                    id          SERIAL PRIMARY KEY,
+                    account_id  INT         NOT NULL,
+                    as_of_date  DATE        NOT NULL,
+                    seq         SMALLINT    NOT NULL,
+                    msg         TEXT        NOT NULL,
+                    level       VARCHAR(16) NOT NULL,
+                    updated_at  TIMESTAMP   NOT NULL DEFAULT NOW(),
+                    UNIQUE (account_id, as_of_date, seq)
+                )
+            """)
+
+        conn.commit()
 
 
+def migrate_tables() -> None:
+    """
+    Add new columns to existing tables. Safe to run multiple times — uses
+    ADD COLUMN IF NOT EXISTS (PostgreSQL >= 9.6).
+    """
+    add_cols = [
+        "unrealized_gain   FLOAT",
+        "var_1d_95         FLOAT",
+        "var_1d_99         FLOAT",
+        "var_10d_99        FLOAT",
+        "es_1d_95          FLOAT",
+        "es_99             FLOAT",
+        "volatility        FLOAT",
+        "sharpe            FLOAT",
+        "beta              FLOAT",
+        "max_drawdown      FLOAT",
+        "top_five_conc     FLOAT",
+    ]
+    drop_cols = [
+        "var_1d_95_pct",
+        "var_1d_99_pct",
+        "var_10d_99_pct",
+        "es_99_pct",
+    ]
+    with pg_connection() as conn:
+        with conn.cursor() as cur:
+            for col in add_cols:
+                cur.execute(f"ALTER TABLE db_portfolio_summary ADD COLUMN IF NOT EXISTS {col};")
+            for col in drop_cols:
+                cur.execute(f"ALTER TABLE db_portfolio_summary DROP COLUMN IF EXISTS {col};")
         conn.commit()
 
 
 if __name__ == "__main__":
     create_tables()
-    print("Tables created successfully.")
+    migrate_tables()
+    print("Tables created/migrated successfully.")

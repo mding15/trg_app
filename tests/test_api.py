@@ -4,10 +4,14 @@ Created on Mon Mar 18 14:47:56 2024
 
 @author: mgdin
 """
+import os
+import sys
+
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 import xlwings as xw
 import requests
 import json
-import os
 from pathlib import Path
 
 from trg_config import config
@@ -17,14 +21,20 @@ from database import pg_create_connection
 from utils import tools, xl_utils, test_utils
 from security import security_info
 
-username = os.environ['test_username']
-password = os.environ['test_password']
+# username = os.environ['test_username']
+# password = os.environ['test_password']
+username = 'test1@trg.com'
+password = 'test123'
 
-admin_username = os.environ['api_username']
-admin_password = os.environ['api_password']
+# admin_username = os.environ['api_username']
+# admin_password = os.environ['api_password']
 
-host = 'https://engine.tailriskglobal.com'
-# host = 'http://localhost:8000'
+admin_username = 'test1@trg.com'
+admin_password = 'test123'
+
+
+# host = 'https://engine.tailriskglobal.com'
+host = 'http://localhost:5050'
 # host = 'http://54.82.69.244' # dev2
 client.set_host(host)
 
@@ -618,6 +628,29 @@ def get_mkt_data_payload(tickers=['SPY', 'AAPL']):
 
     return input_data
 
+def test_summary_metrics():
+    account_id = 1003
+
+    token = test_login(username, password)
+    params = {'token': token, 'account_id': account_id}
+
+    url = f'{host}/api/risk/summary'
+    print(url)
+
+    try:
+        response = requests.get(url, params=params)
+
+        if response.status_code == 200:
+            data = response.json()
+            print(json.dumps(data, indent=2))
+        else:
+            print(f"Failed: {response.status_code}")
+            print("Response:", response.text)
+
+    except requests.exceptions.RequestException as e:
+        print(f"An error occurred: {e}")
+
+
 #############################################################################
 # TEST
 def test():
@@ -643,3 +676,5 @@ def test():
         msg = response.json()['message']
         print('Error:', msg)
 
+if __name__ == '__main__':
+    test_summary_metrics()

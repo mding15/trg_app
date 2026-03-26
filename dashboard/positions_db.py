@@ -8,7 +8,11 @@ Tables:
 """
 from __future__ import annotations
 
+import logging
+
 from database2 import pg_connection
+
+logger = logging.getLogger(__name__)
 
 
 # ── Write ─────────────────────────────────────────────────────────────────────
@@ -56,21 +60,44 @@ def delete_portfolio_summary(account_id: int, as_of_date) -> int:
 
 
 def write_portfolio_summary(account_id: int, summary: dict) -> None:
-    """Upsert a portfolio summary row into db_portfolio_summary."""
+    """Upsert a portfolio summary row into db_portfolio_summary.
+
+    Required keys: asOfDate, aum, numPositions, dayPnL, dayReturn,
+                   mtdReturn, ytdReturn, oneYearReturn
+    Optional keys (risk metrics, default None):
+        unrealizedGain, var1d95, var1d99, var10d99, es1d95, es99,
+        volatility, sharpe, beta, maxDrawdown, topFiveConc
+    """
     sql = """
         INSERT INTO db_portfolio_summary
             (account_id, as_of_date, aum, num_positions, day_pnl,
-             day_return, mtd_return, ytd_return, one_year_return, updated_at)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
+             day_return, mtd_return, ytd_return, one_year_return,
+             unrealized_gain, var_1d_95, var_1d_99, var_10d_99,
+             es_1d_95, es_99,
+             volatility, sharpe, beta, max_drawdown, top_five_conc, updated_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s, NOW())
         ON CONFLICT (account_id, as_of_date) DO UPDATE SET
-            aum             = EXCLUDED.aum,
-            num_positions   = EXCLUDED.num_positions,
-            day_pnl         = EXCLUDED.day_pnl,
-            day_return      = EXCLUDED.day_return,
-            mtd_return      = EXCLUDED.mtd_return,
-            ytd_return      = EXCLUDED.ytd_return,
-            one_year_return = EXCLUDED.one_year_return,
-            updated_at      = NOW()
+            aum              = EXCLUDED.aum,
+            num_positions    = EXCLUDED.num_positions,
+            day_pnl          = EXCLUDED.day_pnl,
+            day_return       = EXCLUDED.day_return,
+            mtd_return       = EXCLUDED.mtd_return,
+            ytd_return       = EXCLUDED.ytd_return,
+            one_year_return  = EXCLUDED.one_year_return,
+            unrealized_gain  = EXCLUDED.unrealized_gain,
+            var_1d_95        = EXCLUDED.var_1d_95,
+            var_1d_99        = EXCLUDED.var_1d_99,
+            var_10d_99       = EXCLUDED.var_10d_99,
+            es_1d_95         = EXCLUDED.es_1d_95,
+            es_99            = EXCLUDED.es_99,
+            volatility       = EXCLUDED.volatility,
+            sharpe           = EXCLUDED.sharpe,
+            beta             = EXCLUDED.beta,
+            max_drawdown     = EXCLUDED.max_drawdown,
+            top_five_conc    = EXCLUDED.top_five_conc,
+            updated_at       = NOW()
     """
     with pg_connection() as conn:
         with conn.cursor() as cur:
@@ -84,6 +111,17 @@ def write_portfolio_summary(account_id: int, summary: dict) -> None:
                 summary["mtdReturn"],
                 summary["ytdReturn"],
                 summary["oneYearReturn"],
+                summary.get("unrealizedGain"),
+                summary.get("var1d95"),
+                summary.get("var1d99"),
+                summary.get("var10d99"),
+                summary.get("es1d95"),
+                summary.get("es99"),
+                summary.get("volatility"),
+                summary.get("sharpe"),
+                summary.get("beta"),
+                summary.get("maxDrawdown"),
+                summary.get("topFiveConc"),
             ))
         conn.commit()
 
@@ -156,7 +194,50 @@ def get_account_ids_for_user(username: str) -> list[int]:
                 """,
                 (username,),
             )
-            return [row[0] for row in cur.fetchall()]
+            result = [row[0] for row in cur.fetchall()]
+            logger.debug("get_account_ids_for_user(%r) -> %r", username, result)
+            return result
+
+
+def get_accounts_for_user(username: str) -> list[dict]:
+    """
+    Return all accounts the given username has access to, ordered by account_id.
+    Joins: user -> account_access -> account.
+    Returns a list of {account_id, account_name} dicts.
+    """
+    with pg_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT a.account_id, a.account_name
+                FROM "user" u
+                JOIN account_access aa ON aa.user_id = u.user_id
+                JOIN account a ON a.account_id = aa.account_id
+                WHERE u.username = %s
+                ORDER BY a.account_id
+                """,
+                (username,),
+            )
+            result = [{"account_id": row[0], "account_name": row[1]} for row in cur.fetchall()]
+            logger.debug("get_accounts_for_user(%r) -> %r", username, result)
+            return result
+
+
+def user_has_account_access(username: str, account_id: int) -> bool:
+    """Return True if the given username has access to the given account_id."""
+    with pg_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT 1
+                FROM "user" u
+                JOIN account_access aa ON aa.user_id = u.user_id
+                WHERE u.username = %s AND aa.account_id = %s
+                LIMIT 1
+                """,
+                (username, account_id),
+            )
+            return cur.fetchone() is not None
 
 
 # ── Read (internal) ───────────────────────────────────────────────────────────
@@ -175,10 +256,13 @@ def get_mv_history_dates(account_id: int) -> set:
 # ── Read (API) ────────────────────────────────────────────────────────────────
 
 def read_portfolio_summary(account_id: int) -> dict:
-    """Return the latest portfolio summary for account_id."""
+    """Return the latest portfolio summary for account_id, including all risk metrics."""
     sql = """
         SELECT as_of_date, aum, num_positions, day_pnl, day_return,
-               mtd_return, ytd_return, one_year_return
+               mtd_return, ytd_return, one_year_return,
+               unrealized_gain, var_1d_95, var_1d_99, var_10d_99,
+               es_1d_95, es_99,
+               volatility, sharpe, beta, max_drawdown, top_five_conc
         FROM db_portfolio_summary
         WHERE account_id = %s
         ORDER BY as_of_date DESC
@@ -192,16 +276,299 @@ def read_portfolio_summary(account_id: int) -> dict:
     if not row:
         return {}
 
+    aum = row[1]
+
+    def _pct(value):
+        if value is None or aum is None or aum == 0:
+            return None
+        return value / aum * 100
+
     return {
-        "asOfDate":      row[0].strftime("%Y-%m-%d"),
-        "aum":           row[1],
-        "numPositions":  row[2],
-        "dayPnL":        row[3],
-        "dayReturn":     row[4],
-        "mtdReturn":     row[5],
-        "ytdReturn":     row[6],
-        "oneYearReturn": row[7],
+        "asOfDate":       row[0].strftime("%Y-%m-%d"),
+        "aum":            aum,
+        "numPositions":   row[2],
+        "dayPnL":         row[3],
+        "dayReturn":      row[4],
+        "mtdReturn":      row[5],
+        "ytdReturn":      row[6],
+        "oneYearReturn":  row[7],
+        "unrealizedGain": row[8],
+        "var1d95":        row[9],
+        "var1d95Pct":     _pct(row[9]),
+        "var1d99":        row[10],
+        "var1d99Pct":     _pct(row[10]),
+        "var10d99":       row[11],
+        "var10d99Pct":    _pct(row[11]),
+        "es1d95":         row[12],
+        "es1d95Pct":      _pct(row[12]),
+        "es99":           row[13],
+        "es99Pct":        _pct(row[13]),
+        "volatility":     row[14],
+        "sharpe":         row[15],
+        "beta":           row[16],
+        "maxDrawdown":    row[17],
+        "topFiveConc":    row[18],
     }
+
+
+# ── Asset allocation ──────────────────────────────────────────────────────────
+
+def delete_asset_allocation(account_id: int, as_of_date) -> int:
+    """Delete db_asset_allocation rows for (account_id, as_of_date). Returns row count."""
+    with pg_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "DELETE FROM db_asset_allocation WHERE account_id = %s AND as_of_date = %s",
+                (account_id, as_of_date),
+            )
+            count = cur.rowcount
+        conn.commit()
+    return count
+
+
+def write_asset_allocation(account_id: int, as_of_date, rows: list[dict]) -> None:
+    """Upsert asset-class rows into db_asset_allocation.
+
+    Each row dict keys: assetClass, marketValue, weight, bmkWeight,
+                        periodReturn, varContrib
+    """
+    sql = """
+        INSERT INTO db_asset_allocation
+            (account_id, as_of_date, asset_class, market_value, weight,
+             bmk_weight, period_return, var_contrib, updated_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW())
+        ON CONFLICT (account_id, as_of_date, asset_class) DO UPDATE SET
+            market_value   = EXCLUDED.market_value,
+            weight         = EXCLUDED.weight,
+            bmk_weight     = EXCLUDED.bmk_weight,
+            period_return  = EXCLUDED.period_return,
+            var_contrib    = EXCLUDED.var_contrib,
+            updated_at     = NOW()
+    """
+    data = [
+        (account_id, as_of_date,
+         r["assetClass"], r.get("marketValue"), r.get("weight"),
+         r.get("bmkWeight"), r.get("periodReturn"), r.get("varContrib"))
+        for r in rows
+    ]
+    with pg_connection() as conn:
+        with conn.cursor() as cur:
+            cur.executemany(sql, data)
+        conn.commit()
+
+
+def read_asset_allocation(account_id: int) -> list[dict]:
+    """Return asset allocation for the latest as_of_date for account_id."""
+    sql = """
+        SELECT asset_class, market_value, weight, bmk_weight, period_return, var_contrib
+        FROM db_asset_allocation
+        WHERE account_id = %s
+          AND as_of_date = (
+              SELECT MAX(as_of_date) FROM db_asset_allocation WHERE account_id = %s
+          )
+        ORDER BY weight DESC NULLS LAST
+    """
+    with pg_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql, (account_id, account_id))
+            rows = cur.fetchall()
+    return [
+        {
+            "assetClass":    r[0],
+            "marketValue":   r[1],
+            "weight":        r[2],
+            "bmkWeight":     r[3],
+            "periodReturn":  r[4],
+            "varContrib":    r[5],
+        }
+        for r in rows
+    ]
+
+
+# ── Stress test results ────────────────────────────────────────────────────────
+
+def delete_stress_results(account_id: int, as_of_date) -> int:
+    """Delete db_stress_results rows for (account_id, as_of_date). Returns row count."""
+    with pg_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "DELETE FROM db_stress_results WHERE account_id = %s AND as_of_date = %s",
+                (account_id, as_of_date),
+            )
+            count = cur.rowcount
+        conn.commit()
+    return count
+
+
+def write_stress_results(account_id: int, as_of_date, rows: list[dict]) -> None:
+    """Upsert stress-test result rows into db_stress_results.
+
+    Each row dict keys: scenarioId (int), pnlUsd, pnlPct
+    """
+    sql = """
+        INSERT INTO db_stress_results
+            (account_id, as_of_date, scenario_id, pnl_usd, pnl_pct, updated_at)
+        VALUES (%s, %s, %s, %s, %s, NOW())
+        ON CONFLICT (account_id, as_of_date, scenario_id) DO UPDATE SET
+            pnl_usd    = EXCLUDED.pnl_usd,
+            pnl_pct    = EXCLUDED.pnl_pct,
+            updated_at = NOW()
+    """
+    data = [
+        (account_id, as_of_date, r["scenarioId"], r.get("pnlUsd"), r.get("pnlPct"))
+        for r in rows
+    ]
+    with pg_connection() as conn:
+        with conn.cursor() as cur:
+            cur.executemany(sql, data)
+        conn.commit()
+
+
+# ── Risk alerts ────────────────────────────────────────────────────────────────
+
+def delete_risk_alerts(account_id: int, as_of_date) -> int:
+    """Delete db_risk_alerts rows for (account_id, as_of_date). Returns row count."""
+    with pg_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "DELETE FROM db_risk_alerts WHERE account_id = %s AND as_of_date = %s",
+                (account_id, as_of_date),
+            )
+            count = cur.rowcount
+        conn.commit()
+    return count
+
+
+def write_risk_alerts(account_id: int, as_of_date, alerts: list[dict]) -> None:
+    """Upsert risk alert rows into db_risk_alerts.
+
+    Each alert dict keys: msg (str), level (str: warning / info / critical)
+    Seq is assigned automatically as 1-based position in the list.
+    """
+    sql = """
+        INSERT INTO db_risk_alerts
+            (account_id, as_of_date, seq, msg, level, updated_at)
+        VALUES (%s, %s, %s, %s, %s, NOW())
+        ON CONFLICT (account_id, as_of_date, seq) DO UPDATE SET
+            msg        = EXCLUDED.msg,
+            level      = EXCLUDED.level,
+            updated_at = NOW()
+    """
+    data = [
+        (account_id, as_of_date, idx + 1, a["msg"], a["level"])
+        for idx, a in enumerate(alerts)
+    ]
+    with pg_connection() as conn:
+        with conn.cursor() as cur:
+            cur.executemany(sql, data)
+        conn.commit()
+
+
+def read_risk_alerts(account_id: int) -> list[dict]:
+    """Return risk alerts for the latest as_of_date, ordered by seq."""
+    sql = """
+        SELECT msg, level
+        FROM db_risk_alerts
+        WHERE account_id = %s
+          AND as_of_date = (
+              SELECT MAX(as_of_date) FROM db_risk_alerts WHERE account_id = %s
+          )
+        ORDER BY seq
+    """
+    with pg_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql, (account_id, account_id))
+            rows = cur.fetchall()
+    return [{"msg": r[0], "level": r[1]} for r in rows]
+
+
+def count_risk_alerts(account_id: int) -> int:
+    """Count risk alerts for the latest as_of_date (used for activeAlerts in risk summary)."""
+    sql = """
+        SELECT COUNT(*)
+        FROM db_risk_alerts
+        WHERE account_id = %s
+          AND as_of_date = (
+              SELECT MAX(as_of_date) FROM db_risk_alerts WHERE account_id = %s
+          )
+    """
+    with pg_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql, (account_id, account_id))
+            row = cur.fetchone()
+    return row[0] if row else 0
+
+
+# ── Account config ─────────────────────────────────────────────────────────────
+
+def read_var_limit(account_id: int) -> float | None:
+    """Return var_limit_pct from account_limit for the given account_id.
+
+    NOTE: verify the column name matches your account_limit table definition.
+    """
+    with pg_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT limit_value FROM account_limit WHERE account_id = %s AND limit_category = 'var_limit_pct'",
+                (account_id,),
+            )
+            row = cur.fetchone()
+    return float(row[0]) if row and row[0] is not None else None
+
+
+# ── Chart data (computed from db_mv_history) ───────────────────────────────────
+
+def compute_chart_data(account_id: int, range_key: str) -> list[dict]:
+    """
+    Compute portfolio total-value time series from db_mv_history.
+
+    Returns a list of {label, value, bmk} dicts where:
+    - value is the total market value in dollars (sum over all securities)
+    - bmk is None (benchmark data not yet available)
+    - label format: "Mon DD" for 1M, "Mon 'YY" for all other ranges
+
+    range_key: "1M" | "3M" | "1Y" | "3Y" | "ALL"
+    """
+    from datetime import date, timedelta
+
+    today = date.today()
+    range_days = {"1M": 30, "3M": 90, "1Y": 365, "3Y": 365 * 3}
+    days = range_days.get(range_key.upper())
+    label_fmt = "%b %d" if range_key.upper() == "1M" else "%b '%y"
+
+    if days is not None:
+        cutoff = today - timedelta(days=days)
+        sql = """
+            SELECT as_of_date, SUM(market_value) AS total_mv
+            FROM db_mv_history
+            WHERE account_id = %s AND as_of_date >= %s
+            GROUP BY as_of_date
+            ORDER BY as_of_date
+        """
+        params = (account_id, cutoff)
+    else:
+        sql = """
+            SELECT as_of_date, SUM(market_value) AS total_mv
+            FROM db_mv_history
+            WHERE account_id = %s
+            GROUP BY as_of_date
+            ORDER BY as_of_date
+        """
+        params = (account_id,)
+
+    with pg_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql, params)
+            rows = cur.fetchall()
+
+    return [
+        {
+            "label": row[0].strftime(label_fmt),
+            "value": float(row[1]) if row[1] is not None else None,
+            "bmk":   None,
+        }
+        for row in rows
+    ]
 
 
 def read_positions(account_id: int) -> list[dict]:
