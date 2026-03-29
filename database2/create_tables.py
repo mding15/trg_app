@@ -254,6 +254,13 @@ def create_tables() -> None:
                 )
             """)
 
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS proc_asof_date (
+                    as_of_date  DATE      NOT NULL,
+                    updated_at  TIMESTAMP NOT NULL DEFAULT NOW()
+                )
+            """)
+
         conn.commit()
 
 

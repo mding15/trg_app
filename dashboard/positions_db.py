@@ -574,7 +574,7 @@ def compute_chart_data(account_id: int, range_key: str) -> list[dict]:
 def read_positions(account_id: int) -> list[dict]:
     """Return positions for the latest as_of_date for account_id."""
     sql = """
-        SELECT security_id, name, asset_class, currency, market_value, weight,
+        SELECT security_id, ticker, name, asset_class, currency, market_value, weight,
                day_pnl, day_return, mtd_return, ytd_return, one_year_return, var_contrib
         FROM db_positions
         WHERE account_id = %s
@@ -591,17 +591,18 @@ def read_positions(account_id: int) -> list[dict]:
     return [
         {
             "security_id":   r[0],
-            "name":          r[1],
-            "assetClass":    r[2],
-            "currency":      r[3],
-            "marketValue":   r[4],
-            "weight":        r[5],
-            "dayPnL":        r[6],
-            "dayReturn":     r[7],
-            "mtdReturn":     r[8],
-            "ytdReturn":     r[9],
-            "oneYearReturn": r[10],
-            "varContrib":    r[11],
+            "ticker":        r[1],
+            "name":          r[2],
+            "assetClass":    r[3],
+            "currency":      r[4],
+            "marketValue":   r[5],
+            "weight":        r[6],
+            "dayPnL":        r[7],
+            "dayReturn":     r[8],
+            "mtdReturn":     r[9],
+            "ytdReturn":     r[10],
+            "oneYearReturn": r[11],
+            "varContrib":    r[12],
         }
         for r in rows
     ]
