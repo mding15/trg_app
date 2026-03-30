@@ -233,12 +233,23 @@ def delete_stock_price(ticker, min_date, max_date):
 
         
 #
+def _get_proc_asof_date():
+    """Return as_of_date from proc_asof_date table as a datetime.date. Raises if missing."""
+    with pg_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute('SELECT as_of_date FROM proc_asof_date LIMIT 1')
+            row = cur.fetchone()
+            if not row or row[0] is None:
+                raise RuntimeError('proc_asof_date table is empty — cannot determine as_of_date')
+            val = row[0]
+            return val.date() if hasattr(val, 'date') else val
+
+
 # extract End of Day Price and save db
-# today = datetime.datetime.now()
 def extract_eod(tickers=None):
 
-    # return Monday to Friday
-    today = get_eod_date()
+    # get as_of_date from proc_asof_date table
+    today = _get_proc_asof_date()
 
     # get tickers from table <current_security>
     df = get_eod_tickers(tickers)

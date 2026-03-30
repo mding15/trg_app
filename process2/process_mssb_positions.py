@@ -17,7 +17,9 @@ Steps:
     7. Insert processed rows into proc_positions.
 
 Usage:
-    python process_mssb_positions.py 2025-01-15
+    python process_mssb_positions.py                   # feed_date from proc_asof_date table
+    python process_mssb_positions.py --date 2025-01-15 # specific date
+    python process_mssb_positions.py --all             # all dates in mssb_posit
 """
 from __future__ import annotations
 
@@ -34,7 +36,7 @@ from database2 import pg_connection
 # ── logging setup ──────────────────────────────────────────────────────────────
 
 def _setup_logger(feed_date) -> logging.Logger:
-    log_dir = os.path.join(os.path.dirname(__file__), '..', 'logs')
+    log_dir = os.path.join(os.path.dirname(__file__), '..', '..', 'log')
     os.makedirs(log_dir, exist_ok=True)
     log_file = os.path.join(
         log_dir,
@@ -501,13 +503,28 @@ def process_mssb_positions(feed_date) -> int:
     return n
 
 
-if __name__ == '__main__':
-    if len(sys.argv) < 2:
-        print('Usage: python process_mssb_positions.py <feed_date>')
-        print('       python process_mssb_positions.py --all')
-        sys.exit(1)
+def _get_proc_asof_date() -> str:
+    """Return as_of_date from proc_asof_date table as 'YYYY-MM-DD'. Raises if missing."""
+    with pg_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute('SELECT as_of_date FROM proc_asof_date LIMIT 1')
+            row = cur.fetchone()
+            if not row or row[0] is None:
+                raise RuntimeError('proc_asof_date table is empty — cannot determine as_of_date')
+            return row[0].isoformat() if hasattr(row[0], 'isoformat') else str(row[0])
 
-    if sys.argv[1] == '--all':
+
+if __name__ == '__main__':
+    import argparse
+    parser = argparse.ArgumentParser(description='Process MSSB positions into proc_positions')
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument('--date', metavar='YYYY-MM-DD',
+                       help='Process a specific feed_date (default: read from proc_asof_date table)')
+    group.add_argument('--all', action='store_true',
+                       help='Process all feed_dates found in mssb_posit')
+    args = parser.parse_args()
+
+    if args.all:
         with pg_connection() as _conn:
             with _conn.cursor() as _cur:
                 _cur.execute('SELECT DISTINCT feed_date FROM mssb_posit ORDER BY feed_date')
@@ -519,4 +536,5 @@ if __name__ == '__main__':
         for _feed_date in _feed_dates:
             process_mssb_positions(_feed_date)
     else:
-        process_mssb_positions(sys.argv[1])
+        _feed_date = args.date or _get_proc_asof_date()
+        process_mssb_positions(_feed_date)

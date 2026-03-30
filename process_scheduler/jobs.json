@@ -1,0 +1,112 @@
+[
+  {
+    "id": "as_of_date",
+    "name": "As-Of Date",
+    "description": "Calculates and persists the current as_of_date.",
+    "script_path": "api/trgapp/process_scheduler/as_of_date.py",
+    "script_type": "python",
+    "schedule_time": null,
+    "dependencies": [],
+    "max_retries": 2,
+    "retry_delay_seconds": 60,
+    "enabled": true,
+    "venv_path": null
+  },
+
+    {
+    "id": "mssb_sftp",
+    "name": "MSSB SFTP",
+    "description": "Pulls and decrypts trading positions data from Morgan Stanley SFTP.",
+    "script_path": "api/trgapp/process_scheduler/mssb_sftp.sh",
+    "script_type": "shell",
+    "schedule_time": "06:00",
+    "dependencies": ["as_of_date"],
+    "max_retries": 2,
+    "retry_delay_seconds": 60,
+    "enabled": true,
+    "venv_path": null
+  },
+
+  {
+    "id": "mssb_upload",
+    "name": "MSSB Upload",
+    "description": "Upload MSSB raw data to database.",
+    "script_path": "brokers/mssb/feed_ms.py",
+    "script_type": "python",
+    "schedule_time": null,
+    "dependencies": ["mssb_sftp"],
+    "max_retries": 2,
+    "retry_delay_seconds": 60,
+    "enabled": true,
+    "venv_path": null
+  },
+
+  {
+    "id": "mssb_archive",
+    "name": "MSSB Archive",
+    "description": "Archive MSSB raw data .",
+    "script_path": "brokers/mssb/bin/archive_ms_files.py",
+    "script_type": "python",
+    "schedule_time": null,
+    "dependencies": ["mssb_upload"],
+    "max_retries": 2,
+    "retry_delay_seconds": 60,
+    "enabled": true,
+    "venv_path": null
+  },
+
+  {
+    "id": "mssb_preprocess",
+    "name": "MSSB Pre-Process",
+    "description": "Process MSSB positions into standard format and load into database.",
+    "script_path": "api/trgapp/process2/process_mssb_positions.py",
+    "script_type": "python",
+    "schedule_time": null,
+    "dependencies": ["mssb_upload"],
+    "max_retries": 2,
+    "retry_delay_seconds": 60,
+    "enabled": true,
+    "venv_path": null
+  },
+
+  {
+    "id": "calculate_var",
+    "name": "Calculate VaR",
+    "description": "Calculate VAR for all accounts.",
+    "script_path": "api/trgapp/process_scheduler/calculate_var.py",
+    "script_type": "python",
+    "schedule_time": null,
+    "dependencies": ["mssb_preprocess"],
+    "max_retries": 2,
+    "retry_delay_seconds": 60,
+    "enabled": true,
+    "venv_path": null
+  },
+  {
+    "id": "yh_eod_price",
+    "name": "YH EOD Price",
+    "description": "Extract end-of-day prices from Yahoo Finance and load into current_price.",
+    "script_path": "api/trgapp/process_scheduler/yh_eod_price.py",
+    "script_type": "python",
+    "schedule_time": "20:30",
+    "dependencies": ["as_of_date"],
+    "max_retries": 2,
+    "retry_delay_seconds": 60,
+    "enabled": true,
+    "venv_path": null
+  },
+
+  {
+    "id": "dashboard_process",
+    "name": "Dashboard Process",
+    "description": "Run daily dashboard computation process.",
+    "script_path": "api/trgapp/dashboard/dashboard_process.py",
+    "script_type": "python",
+    "schedule_time": null,
+    "dependencies": ["calculate_var"],
+    "max_retries": 2,
+    "retry_delay_seconds": 60,
+    "enabled": true,
+    "venv_path": null
+  }
+]

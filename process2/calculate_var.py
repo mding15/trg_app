@@ -15,8 +15,10 @@ Usage:
 """
 from __future__ import annotations
 
+import logging
 import os
 import sys
+from datetime import datetime
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
@@ -26,6 +28,32 @@ from api import app
 from engine import VaR_engine as engine
 from process2.db_position_var import fetch_latest_as_of_date, insert_results
 from process2.preprocess_var import preprocess_var
+
+
+# ── logging setup ─────────────────────────────────────────────────────────────
+
+def _setup_logger(feed_source: str, as_of_date) -> logging.Logger:
+    log_dir = os.path.join(os.path.dirname(__file__), '..', '..', 'log')
+    os.makedirs(log_dir, exist_ok=True)
+    log_file = os.path.join(
+        log_dir,
+        f'calculate_var_{feed_source}_{as_of_date}_{datetime.now().strftime("%Y%m%d_%H%M%S")}.log',
+    )
+    logger = logging.getLogger(f'calculate_var_{feed_source}_{as_of_date}')
+    logger.setLevel(logging.DEBUG)
+    logger.handlers.clear()
+
+    fmt = logging.Formatter('%(asctime)s  %(levelname)-8s  %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
+
+    fh = logging.FileHandler(log_file, encoding='utf-8')
+    fh.setFormatter(fmt)
+    logger.addHandler(fh)
+
+    sh = logging.StreamHandler(sys.stdout)
+    sh.setFormatter(fmt)
+    logger.addHandler(sh)
+
+    return logger
 
 
 # ── results builder ────────────────────────────────────────────────────────────
@@ -84,9 +112,9 @@ def calculate_var(feed_source: str, as_of_date=None):
     """
     if as_of_date is None:
         as_of_date = fetch_latest_as_of_date(feed_source)
-        print(f'as_of_date not provided, using latest for feed_source={feed_source!r}: {as_of_date}')
 
-    print(f"=== Calculating VaR for feed_source={feed_source!r} as_of_date={as_of_date} ===")
+    logger = _setup_logger(feed_source, as_of_date)
+    logger.info(f"=== Start calculating VaR for feed_source={feed_source!r} as_of_date={as_of_date} ===")
 
     params, all_positions = preprocess_var(as_of_date, feed_source)
     account_ids   = all_positions['account_id'].unique()
@@ -112,14 +140,15 @@ def calculate_var(feed_source: str, as_of_date=None):
 
             n = insert_results(result, as_of_date)
             total_inserted += n
-            print(f"account_id={account_id}: {len(active)} positions calculated, "
-                  f"{len(excluded)} excluded, {n} rows inserted")
+            logger.info(f"account_id={account_id}: {len(active)} positions calculated, "
+                        f"{len(excluded)} excluded, {n} rows inserted")
 
         except Exception as e:
-            print(f"account_id={account_id}: FAILED — {e}")
+            logger.error(f"account_id={account_id}: FAILED — {e}")
             continue
 
-    print(f"Total: {total_inserted} rows inserted across {len(account_ids)} account(s)")
+    logger.info(f"Total: {total_inserted} rows inserted across {len(account_ids)} account(s)")
+    logger.info("=== Done ===")
 
 
 if __name__ == '__main__':

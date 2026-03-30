@@ -17,9 +17,6 @@ Usage:
 
 import sys
 import os
-import json
-import urllib.request
-import urllib.error
 from datetime import date, timedelta
 
 import pytz
@@ -29,10 +26,6 @@ from datetime import datetime
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from database2 import pg_connection
-
-SCHEDULER_URL   = 'https://dev2.tailriskglobal.com/scheduler'
-PROCESS_ID      = 'as_of_date'
-SCRIPT_PATH     = '/home/ec2-user/api/trgapp/process_scheduler/as_of_date.py'
 
 NY_TZ = pytz.timezone('America/New_York')
 
@@ -65,59 +58,6 @@ def update_as_of_date(as_of_date: date) -> None:
         conn.commit()
 
 
-def register_job() -> None:
-    """Register or update this process in the scheduler via PUT."""
-    payload = json.dumps({
-        'name':                 'As-Of Date',
-        'description':          'Calculates and persists the current as_of_date.',
-        'script_path':          SCRIPT_PATH,
-        'script_type':          'python',
-        'schedule_time':        None,
-        'dependencies':         [],
-        'max_retries':          2,
-        'retry_delay_seconds':  60,
-        'enabled':              True,
-        'venv_path':            None,
-    }).encode()
-
-    url = f'{SCHEDULER_URL}/api/processes/{PROCESS_ID}'
-    req = urllib.request.Request(
-        url, data=payload, method='PUT',
-        headers={'Content-Type': 'application/json'},
-    )
-    try:
-        with urllib.request.urlopen(req) as resp:
-            body = json.loads(resp.read())
-            print(f"Registered: {body.get('id')} — {body.get('name')}")
-    except urllib.error.HTTPError as e:
-        # 404 means it doesn't exist yet — fall back to POST
-        if e.code == 404:
-            url = f'{SCHEDULER_URL}/api/processes'
-            payload_create = json.dumps({
-                'id': PROCESS_ID,
-                'name':                 'As-Of Date',
-                'description':          'Calculates and persists the current as_of_date.',
-                'script_path':          SCRIPT_PATH,
-                'script_type':          'python',
-                'schedule_time':        None,
-                'dependencies':         [],
-                'max_retries':          2,
-                'retry_delay_seconds':  60,
-                'enabled':              True,
-                'venv_path':            None,
-            }).encode()
-            req2 = urllib.request.Request(
-                url, data=payload_create, method='POST',
-                headers={'Content-Type': 'application/json'},
-            )
-            with urllib.request.urlopen(req2) as resp:
-                body = json.loads(resp.read())
-                print(f"Created: {body.get('id')} — {body.get('name')}")
-        else:
-            print(f"Error {e.code}: {e.read().decode()}")
-            raise
-
-
 def main():
     as_of_date = get_as_of_date()
     update_as_of_date(as_of_date)
@@ -126,6 +66,7 @@ def main():
 
 if __name__ == '__main__':
     if len(sys.argv) > 1 and sys.argv[1] == '--register':
-        register_job()
+        from register import register_by_id
+        register_by_id('as_of_date')
     else:
         main()
