@@ -54,7 +54,7 @@ from trg_config import config
 
 from api import app, request_handler, bcrypt, swagger
 from api import request_handler_ft
-from api import create_account, schedule_demo_handler, sso_cookie
+from api import create_account, schedule_demo_handler, request_demo_handler, sso_cookie
 from api import portfolios
 from api.auth import token_required, authenticate
 from api import upload_handler
@@ -65,6 +65,19 @@ from database import db_utils, model_aux, ms_sql_server
 
 from api.logging_config import get_logger
 logger = get_logger(__name__)
+
+
+#####################################################################################
+# Request / response logging
+
+@app.before_request
+def log_request():
+    logger.info(f'[REQUEST]  {request.method} {request.path} — from {request.remote_addr}')
+
+@app.after_request
+def log_response(response):
+    logger.info(f'[RESPONSE] {request.method} {request.path} — {response.status_code}')
+    return response
 
 
 #####################################################################################
@@ -285,6 +298,16 @@ def run_account(username, account_id, as_of_date):
 #################################################################################
 # miscollaneous
 
+@app.route('/api/requestDemo', methods=['POST'])
+def request_demo():
+    try:
+        request_demo_handler.handle_request(request.get_json())
+        return jsonify({'message': 'success'}), 200
+    except Exception as e:
+        print(e)
+        return jsonify({'error': str(e)}), 402
+
+# schedule demo will be removed in the future. Please use requestDemo API to request demo and our sales team will contact you shortly.
 @app.route('/api/scheduleDemo', methods=['POST'])
 def schedule_demo():
     
@@ -531,7 +554,7 @@ from dashboard.positions_db import (
 )
 from dashboard.stress_test import read_stress_results
 from dashboard.static_data import (
-    RISK, RISK_CONTRIBUTIONS, FACTOR_EXPOSURES_V2,
+    RISK, RISK_CONTRIBUTIONS, FACTOR_EXPOSURES_V2, ASSET_ALLOCATION_DRILLDOWN,
 )
 
 
@@ -642,6 +665,7 @@ def get_risk_summary(username):
         if not ps:
             return jsonify({}), 200
         data = {
+            "asOfDate":     ps.get("asOfDate"),
             "var1d95":      ps.get("var1d95"),
             "var1d95Pct":   ps.get("var1d95Pct"),
             "var1d99":      ps.get("var1d99"),
@@ -670,6 +694,12 @@ def get_risk_summary(username):
 def get_risk_contributions(username):
     # Remains static until redesign
     return jsonify(RISK_CONTRIBUTIONS)
+
+
+@app.route("/api/risk/asset_allocation")
+@token_required
+def get_risk_asset_allocation(username):
+    return jsonify(ASSET_ALLOCATION_DRILLDOWN)
 
 
 @app.route("/api/risk/factors")

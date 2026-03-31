@@ -261,6 +261,21 @@ def create_tables() -> None:
                 )
             """)
 
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS demo_request (
+                    id          SERIAL       PRIMARY KEY,
+                    first_name  VARCHAR(100) NOT NULL,
+                    last_name   VARCHAR(100) NOT NULL,
+                    email       VARCHAR(120) NOT NULL,
+                    company     VARCHAR(100) NOT NULL,
+                    aum         VARCHAR(50)  NULL,
+                    interest    VARCHAR(100) NULL,
+                    message     TEXT         NULL,
+                    status      VARCHAR(20)  NOT NULL DEFAULT 'new',
+                    create_date TIMESTAMP    NOT NULL DEFAULT NOW()
+                )
+            """)
+
         conn.commit()
 
 

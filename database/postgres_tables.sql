@@ -1,4 +1,20 @@
 --
+-- client
+--
+
+CREATE TABLE public.client (
+	client_id serial4 NOT NULL,
+	client_name varchar(100) NOT NULL,
+	address varchar(100) NULL,
+	contact_person varchar(100) NULL,
+	contact_phone varchar(20) NULL,
+	create_date date NOT NULL,
+	CONSTRAINT client_client_name_key UNIQUE (client_name),
+	CONSTRAINT client_pkey PRIMARY KEY (client_id)
+);
+
+
+--
 -- account
 --
 
@@ -11,6 +27,7 @@ CREATE TABLE public.account  (
 	-- Scheduler fields for track over time
 	next_run_time timestamp NULL
 );
+
 
 --
 -- account_positions
@@ -465,8 +482,9 @@ and cp."Date" > sd.max_date
 CREATE TABLE public.risk_limit_level (
 	id serial4 NOT NULL,
 	risk_type varchar(20) NOT NULL,
-	category varchar(20) NULL, 
+	category varchar(20) NULL,
 	low float4 NULL,
 	mid float4 NULL,
 	high float4 NULL
 );
+

@@ -21,7 +21,7 @@ from itsdangerous import URLSafeTimedSerializer as Serializer
 from api import email2 as email2_util
 
 from api import db, bcrypt
-from database.models import User
+from database.models import User, Client
 from database.model_aux import add_client, add_client_report_url
 
 from api.logging_config import get_logger
@@ -29,41 +29,51 @@ logger = get_logger(__name__)
 
 
 def create_account(data):
-    
-    firstName   = data.get('firstName')
-    lastName    = data.get('lastName')
-    email       = data.get('email')
-    password    = data.get('password')
-    companyName = data.get('companyName')
-    
-    
+
+    firstName       = data.get('firstName')
+    lastName        = data.get('lastName')
+    email           = data.get('email')
+    password        = data.get('password')
+    companyName     = data.get('companyName')
+    phone           = data.get('phone', '')
+    address         = data.get('address', '')
+    aum             = data.get('aum', '')
+    primaryInterest = data.get('primaryInterest', '')
+
     print(f"create_account: {firstName} {lastName} {email} {companyName}")
 
     # check email format and if exists in db
     check_email(email)
-        
-    # check if email exists in db        
+
+    # check if email exists in db
     user = get_user_by_email(email)
     if user:
         raise Exception(f'Your email has been already registered in our database: {email}')
-    
+
     # password
     if not password or password=='':
         password = generate_random_password(15)
     hashed_password = bcrypt.generate_password_hash(password).decode('utf-8')
-        
+
     # create client
     client_id, exists = add_client({'client_name': companyName})
     if exists == False:
         add_client_report_url(client_id)
-    
+
+    # set additional client fields
+    client = db.session.get(Client, client_id)
+    client.address          = address
+    client.aum              = aum
+    client.primary_interest = primaryInterest
+    db.session.commit()
+
     user = User(username=email, email=email, approval=0, role='user', password=hashed_password, client_id=client_id,
-                firstname=firstName, lastname=lastName, webdashboard_login=email)
-    
+                firstname=firstName, lastname=lastName, phone=phone, webdashboard_login=email)
+
     db.session.add(user)
     db.session.commit()
-    print(f'new user {user.user_id} has been created')    
-    
+    print(f'new user {user.user_id} has been created')
+
     email_new_user_notification(user)
     
 def approve_user(user_id):
@@ -197,7 +207,7 @@ def reset_password_link(token):
 ######################################
 def email_new_user_notification(user):
     client = user.client
-    
+
     subject = "New User Notification"
     receiver_emails = config['SUPPORT_EMAILS']
 
@@ -208,13 +218,17 @@ def email_new_user_notification(user):
             content = file.read()
     except FileNotFoundError:
         raise Exception(f"Error: The template file {template_file} was not found.")
-    
-    content = content.replace("[user_id]"           , f'{user.user_id}')
-    content = content.replace("[firstname]"    , user.firstname)
-    content = content.replace("[lastname]"          , user.lastname)
-    content = content.replace("[email]"          , user.email)
-    content = content.replace("[company_name]"      , client.client_name)
-    
+
+    content = content.replace("[user_id]"          , f'{user.user_id}')
+    content = content.replace("[firstname]"        , user.firstname or '')
+    content = content.replace("[lastname]"         , user.lastname or '')
+    content = content.replace("[email]"            , user.email)
+    content = content.replace("[phone]"            , user.phone or '')
+    content = content.replace("[company_name]"     , client.client_name)
+    content = content.replace("[address]"          , client.address or '')
+    content = content.replace("[aum]"              , client.aum or '')
+    content = content.replace("[primary_interest]" , client.primary_interest or '')
+
     email2_util.send_email(receiver_emails, subject, "", content, cc=[], bcc=[])
     
     

@@ -188,3 +188,29 @@ RISK_ALERTS = [
     {"msg": "NVDA single-position VaR contribution at 9.2% (limit: 10%)", "level": "warning"},
     {"msg": "EM equity exposure at 5.8% vs 5.0% policy limit",            "level": "warning"},
 ]
+
+# ── Risk page — Asset Allocation vs VaR drill-down chart ──────────────────────
+# Source: power_bi/demo.xlsx — dm_fact_d_MgPositions joined with dm_d_Positions
+# Fields: class_name, sc1, ticker, mv_weight (fraction), var_contrib (fraction of total VaR)
+
+ASSET_ALLOCATION_DRILLDOWN = [
+    {"class_name": "Equity",       "sc1": "EQ Fund",          "ticker": "SSDRF",   "mv_weight": 0.0200, "var_contrib": 0.0701},
+    {"class_name": "Equity",       "sc1": "EQ ETF",           "ticker": "CSTNL",   "mv_weight": 0.0250, "var_contrib": 0.1003},
+    {"class_name": "Equity",       "sc1": "EQ ETF",           "ticker": "MFMER",   "mv_weight": 0.0200, "var_contrib": 0.0541},
+    {"class_name": "Equity",       "sc1": "EQ ETF",           "ticker": "LOMIZ",   "mv_weight": 0.0250, "var_contrib": 0.0031},
+    {"class_name": "Equity",       "sc1": "EQ Fund",          "ticker": "JPMMZ",   "mv_weight": 0.0200, "var_contrib": 0.0649},
+    {"class_name": "Equity",       "sc1": "EQ Fund",          "ticker": "TIESI",   "mv_weight": 0.0200, "var_contrib": 0.0479},
+    {"class_name": "Fixed Income", "sc1": "FI Fund",          "ticker": "IMSCF",   "mv_weight": 0.0200, "var_contrib": 0.0109},
+    {"class_name": "Fixed Income", "sc1": "FI ETF",           "ticker": "EUEIC",   "mv_weight": 0.0900, "var_contrib": 0.0074},
+    {"class_name": "Fixed Income", "sc1": "FI ETF",           "ticker": "IHHSF",   "mv_weight": 0.0200, "var_contrib": 0.0323},
+    {"class_name": "Fixed Income", "sc1": "FI Fund",          "ticker": "SCHHH",   "mv_weight": 0.1000, "var_contrib": 0.0392},
+    {"class_name": "Fixed Income", "sc1": "FI Fund",          "ticker": "AGACZ",   "mv_weight": 0.1000, "var_contrib": 0.0560},
+    {"class_name": "Fixed Income", "sc1": "FI ETF",           "ticker": "NUHGZ",   "mv_weight": 0.1900, "var_contrib": 0.1184},
+    {"class_name": "Fixed Income", "sc1": "FI ETF",           "ticker": "AEUUU",   "mv_weight": 0.1900, "var_contrib": 0.3079},
+    {"class_name": "Fixed Income", "sc1": "FI Fund",          "ticker": "MOTTZ",   "mv_weight": 0.0200, "var_contrib": 0.0206},
+    {"class_name": "Alternatives", "sc1": "Real Estate/REITs","ticker": "CACCZ",   "mv_weight": 0.0150, "var_contrib": 0.0158},
+    {"class_name": "Alternatives", "sc1": "Real Estate/REITs","ticker": "LODEZ",   "mv_weight": 0.0150, "var_contrib": 0.0087},
+    {"class_name": "Alternatives", "sc1": "Private Credit",   "ticker": "PGLAZ",   "mv_weight": 0.0200, "var_contrib": 0.0142},
+    {"class_name": "Alternatives", "sc1": "Private Credit",   "ticker": "LODUT",   "mv_weight": 0.0200, "var_contrib": 0.0139},
+    {"class_name": "Alternatives", "sc1": "Private Credit",   "ticker": "ISHVF",   "mv_weight": 0.0200, "var_contrib": 0.0142},
+]

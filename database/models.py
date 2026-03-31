@@ -43,11 +43,13 @@ class User(db.Model):
 class Client(db.Model):
     __tablename__ = 'client'
     client_id   = db.Column(db.Integer, primary_key=True, autoincrement=True)
-    client_name = db.Column(db.String(100), unique=True, nullable=False)
-    address     = db.Column(db.String(100), nullable=True)
-    contact_person = db.Column(db.String(100), nullable=True)
-    contact_phone  = db.Column(db.String(20), nullable=True)
-    create_date = db.Column(db.Date, nullable=False, default=datetime.now)
+    client_name      = db.Column(db.String(100), unique=True, nullable=False)
+    address          = db.Column(db.String(200), nullable=True)
+    contact_person   = db.Column(db.String(100), nullable=True)
+    contact_phone    = db.Column(db.String(20), nullable=True)
+    aum              = db.Column(db.String(50), nullable=True)
+    primary_interest = db.Column(db.String(100), nullable=True)
+    create_date      = db.Column(db.Date, nullable=False, default=datetime.now)
     
     port_groups = db.relationship('Portfolio_Group', backref='client', lazy=True)
     users = db.relationship('User', backref='client', lazy=True)

@@ -1,0 +1,2 @@
+DATA='{"id":"as_of_date","name":"Set As-Of Date","description":"Calculates and persists as_of_date","script_path":"/home/ec2-user/api/trgapp/process_scheduler/as_of_date.sh","script_type":"shell","max_retries":2,"retry_delay_seconds":60}'
+curl -X POST https://dev2.tailriskglobal.com/scheduler/api/processes -H "Content-Type: application/json" -d "$DATA"

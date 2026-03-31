@@ -116,7 +116,11 @@ def calculate_var(feed_source: str, as_of_date=None):
     logger = _setup_logger(feed_source, as_of_date)
     logger.info(f"=== Start calculating VaR for feed_source={feed_source!r} as_of_date={as_of_date} ===")
 
-    params, all_positions = preprocess_var(as_of_date, feed_source)
+    try:
+        params, all_positions = preprocess_var(as_of_date, feed_source)
+    except Exception as e:
+        logger.error(f"preprocess_var failed: {e}")
+        raise
     account_ids   = all_positions['account_id'].unique()
     total_inserted = 0
 
