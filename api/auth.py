@@ -17,6 +17,32 @@ from functools import wraps
 from api import app, bcrypt
 from database.models import User
 
+OPS_ROLES = {'admin', 'superadmin', 'support'}
+
+def ops_role_required(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        token = request.args.get('token')
+        if not token:
+            return jsonify({'message': 'Token is missing!'}), 401
+        try:
+            data = jwt.decode(token, app.config['SECRET_KEY'], algorithms=['HS256'])
+            username = data['username']
+        except jwt.ExpiredSignatureError as e:
+            print("Exception:", e)
+            return jsonify({'message': 'Token has expired!'}), 401
+        except jwt.exceptions.InvalidTokenError as e:
+            print("Exception:", e)
+            return jsonify({'message': 'Token is invalid!'}), 401
+
+        user = User.query.filter_by(username=username).first()
+        if not user or user.role not in OPS_ROLES:
+            return jsonify({'error': 'Access denied. Ops role required.'}), 403
+
+        return f(*args, username, **kwargs)
+    return decorated
+
+
 def token_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):

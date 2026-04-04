@@ -74,6 +74,13 @@ os.environ["EMAIL_PASSWORD"] = app_config["EMAIL_PASSWORD"]
 os.environ["EMAIL_KEY"] = app_config["EMAIL_KEY"]
 
 
+################################################################################################    
+# config.json
+config_file = config['CNFG_DIR'] / 'config.json'
+
+if config_file.exists():    
+    with open(config_file) as _f:
+        config.update(json.load(_f))
 
 ################################################################################################    
 # support_team.json

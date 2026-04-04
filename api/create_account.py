@@ -199,7 +199,8 @@ def send_reset_password_email(user):
     email2_util.send_reset_password_email(username, receiver_emails, activation_link)
 
 def reset_password_link(token):
-    host='https://tailriskglobal.com'
+    #host='https://tailriskglobal.com'
+    host = config['PORTAL_HOST']
     link = f'{host}/resetPassword/{token}'
     return link
     

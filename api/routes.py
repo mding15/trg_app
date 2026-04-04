@@ -56,7 +56,7 @@ from api import app, request_handler, bcrypt, swagger
 from api import request_handler_ft
 from api import create_account, schedule_demo_handler, request_demo_handler, sso_cookie
 from api import portfolios
-from api.auth import token_required, authenticate
+from api.auth import token_required, ops_role_required, authenticate
 from api import upload_handler
 
 from database.models import User as User
@@ -99,7 +99,7 @@ def login():
     try:
         token, user = authenticate()
         # ms_sql_server.wakeup_server()
-        
+
         resp = make_response(jsonify({
             'token': token,
             'role': user.role,
@@ -107,8 +107,26 @@ def login():
             'firstname': user.firstname,
             'lastname': user.lastname
         }))
-        
+
         return resp
+    except Exception as e:
+        return jsonify({'error': str(e)}), 401
+
+OPS_ROLES = {'admin', 'superadmin', 'support'}
+
+@app.route('/api/ops/login', methods=['POST'])
+def ops_login():
+    try:
+        token, user = authenticate()
+        if user.role not in OPS_ROLES:
+            return jsonify({'error': 'Access denied. Ops portal requires admin, superadmin, or support role.'}), 403
+        return jsonify({
+            'token': token,
+            'role': user.role,
+            'email': user.email,
+            'firstname': user.firstname,
+            'lastname': user.lastname
+        })
     except Exception as e:
         return jsonify({'error': str(e)}), 401
 
@@ -215,29 +233,29 @@ def download_file(username, filename):
 
 #user_approval
 @app.route("/api/user_approval/data", methods=['GET','POST'])
-@token_required
+@ops_role_required
 def get_user_approval_data(username):
     print('received: /api/user_approval_data')
     return api_request('get_user_approval_data', username, request)
 
 @app.route("/api/user_approval/update", methods=['POST'])
-@token_required
+@ops_role_required
 def update_user_approval(username):
     return api_request('update_user_approval', username, request)
 
 #user_entitlement
 @app.route("/api/get_entitlement")
-@token_required
+@ops_role_required
 def get_entitlement(username):
     return api_request('get_entitlement', username)
 
 @app.route("/api/update_entitlement", methods=['POST'])
-@token_required
+@ops_role_required
 def update_entitlement(username):
     return api_request('update_entitlement', username, request)
 
 @app.route("/api/get_entitlement_1client", methods=['POST'])
-@token_required
+@ops_role_required
 def get_entitlement_1client(username):
     return api_request('get_entitlement_1client', username, request)
 
@@ -555,6 +573,13 @@ from dashboard.positions_db import (
 from dashboard.stress_test import read_stress_results
 from dashboard.static_data import (
     RISK, RISK_CONTRIBUTIONS, FACTOR_EXPOSURES_V2, ASSET_ALLOCATION_DRILLDOWN,
+    RISK_METRICS, RISK_ADJUSTED_RETURN, TOP_RISKS,
+)
+from dashboard.bar_chart_data import (
+    read_asset_drilldown,
+    read_industry_drilldown,
+    read_region_drilldown,
+    read_currency_drilldown,
 )
 
 
@@ -700,6 +725,60 @@ def get_risk_contributions(username):
 @token_required
 def get_risk_asset_allocation(username):
     return jsonify(ASSET_ALLOCATION_DRILLDOWN)
+
+
+@app.route("/api/risk/asset")
+@token_required
+def get_risk_asset(username):
+    try:
+        return jsonify(read_asset_drilldown())
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/risk/industry")
+@token_required
+def get_risk_industry(username):
+    try:
+        return jsonify(read_industry_drilldown())
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/risk/region")
+@token_required
+def get_risk_region(username):
+    try:
+        return jsonify(read_region_drilldown())
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/risk/currency")
+@token_required
+def get_risk_currency(username):
+    try:
+        return jsonify(read_currency_drilldown())
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/risk/risk_metrics")
+@token_required
+def get_risk_metrics(username):
+    return jsonify(RISK_METRICS)
+
+
+@app.route("/api/risk/risk_adjusted_return")
+@token_required
+def get_risk_adjusted_return(username):
+    return jsonify(RISK_ADJUSTED_RETURN)
+
+
+@app.route("/api/risk/top_risks")
+@token_required
+def get_top_risks(username):
+    return jsonify(TOP_RISKS)
 
 
 @app.route("/api/risk/factors")

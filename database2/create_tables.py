@@ -2,6 +2,7 @@
 create_tables.py — Create the dashboard DB tables.
 
 Tables:
+    account              — master account registry (supports parent hierarchy via parent_account_id)
     db_mv_history        — daily per-symbol market value snapshots
     db_portfolio_summary — pre-computed portfolio summary per (account_id, as_of_date)
     db_positions         — pre-computed positions per (account_id, as_of_date, ticker)
@@ -10,6 +11,7 @@ Tables:
     mssb_posit           — raw MSSB position feed
     broker_account       — broker account registry (account_id lookup for raw feeds)
     proc_positions_hist  — historical archive of displaced proc_positions rows
+    position_var         — per-position risk/VaR metrics per (as_of_date, account_id, pos_id)
 """
 from __future__ import annotations
 
@@ -23,9 +25,21 @@ from database2 import pg_connection
 
 
 def create_tables() -> None:
-    """Create the four dashboard tables if they do not already exist."""
+    """Create all application tables if they do not already exist."""
     with pg_connection() as conn:
         with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS account (
+                    account_id       SERIAL PRIMARY KEY,
+                    account_name     VARCHAR(120) NOT NULL,
+                    short_name       VARCHAR(20) NULL,
+                    owner_id         INT NOT NULL,
+                    client_id        INT NOT NULL,
+                    parent_account_id INT DEFAULT NULL REFERENCES account(account_id),
+                    create_time      TIMESTAMP DEFAULT NOW(),
+                    next_run_time    TIMESTAMP NULL
+                )
+            """)
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS db_mv_history (
                     id           SERIAL PRIMARY KEY,
@@ -110,11 +124,13 @@ def create_tables() -> None:
                     ticker          text NOT NULL,
                     quantity        float NULL,
                     market_value    float NULL,
-                    asset_class     text NOT NULL,
+                    asset_class     text NULL,
                     currency        text NOT NULL,
                     broker_account  text NOT NULL,
-                    feed_source     text NOT NULL,
-                    insert_time     TIMESTAMP NOT NULL DEFAULT NOW()
+                    insert_time     TIMESTAMP NOT NULL DEFAULT NOW(),
+                    last_price      numeric NULL,
+                    last_price_date date NULL,
+                    feed_source     text NULL
                 )
             """)
             cur.execute("""
@@ -171,12 +187,14 @@ def create_tables() -> None:
                     ticker          text NOT NULL,
                     quantity        float NULL,
                     market_value    float NULL,
-                    asset_class     text NOT NULL,
+                    asset_class     text NULL,
                     currency        text NOT NULL,
                     broker_account  text NOT NULL,
-                    feed_source     text NOT NULL,
                     insert_time     TIMESTAMP NOT NULL DEFAULT NOW(),
-                    archived_at     TIMESTAMP NOT NULL DEFAULT NOW()
+                    archived_at     TIMESTAMP NOT NULL DEFAULT NOW(),
+                    last_price      numeric NULL,
+                    last_price_date date NULL,
+                    feed_source     text NULL
                 )
             """)
             cur.execute("""
@@ -192,9 +210,10 @@ def create_tables() -> None:
 
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS account_access (
-                    id SERIAL PRIMARY KEY,
+                    id         SERIAL PRIMARY KEY,
                     account_id INT NOT NULL,
-                    user_id INT NOT NULL,
+                    user_id    INT NOT NULL,
+                    is_default BOOLEAN NOT NULL DEFAULT FALSE,
                     updated_at TIMESTAMP NOT NULL DEFAULT NOW()
                 )
             """)
@@ -255,6 +274,71 @@ def create_tables() -> None:
             """)
 
             cur.execute("""
+                CREATE TABLE IF NOT EXISTS position_var (
+                    as_of_date              date NOT NULL,
+                    account_id              int NOT NULL,
+                    pos_id                  text NOT NULL,
+                    security_id             text NULL,
+                    security_name           text NULL,
+                    isin                    text NULL,
+                    cusip                   text NULL,
+                    ticker                  text NULL,
+                    broker_account          text NULL,
+                    quantity                numeric NULL,
+                    market_value            numeric NULL,
+                    currency                text NULL,
+                    last_price              numeric NULL,
+                    last_price_date         date NULL,
+                    asset_class             text NULL,
+                    asset_type              text NULL,
+                    class                   text NULL,
+                    sc1                     text NULL,
+                    sc2                     text NULL,
+                    country                 text NULL,
+                    region                  text NULL,
+                    sector                  text NULL,
+                    industry                text NULL,
+                    expected_return         numeric NULL,
+                    coupon_rate             numeric NULL,
+                    option_type             text NULL,
+                    option_strike           numeric NULL,
+                    payment_frequency       text NULL,
+                    maturity_date           date NULL,
+                    underlying_security_id  text NULL,
+                    underlying_id           text NULL,
+                    underlying_price        numeric NULL,
+                    is_option               boolean NULL,
+                    excluded                boolean NULL,
+                    exclude_reason          text NULL,
+                    risk_free_rate          numeric NULL,
+                    tenor                   numeric NULL,
+                    delta                   numeric NULL,
+                    gamma                   numeric NULL,
+                    vega                    numeric NULL,
+                    iv                      numeric NULL,
+                    ir_tenor                numeric NULL,
+                    yield                   numeric NULL,
+                    duration                numeric NULL,
+                    convexity               numeric NULL,
+                    ir_pv01                 numeric NULL,
+                    sp_pv01                 numeric NULL,
+                    spread_duration         numeric NULL,
+                    spread_convexity        numeric NULL,
+                    delta_var               numeric NULL,
+                    ir_var                  numeric NULL,
+                    spread_var              numeric NULL,
+                    gamma_var               numeric NULL,
+                    std                     numeric NULL,
+                    marginal_std            numeric NULL,
+                    var                     numeric NULL,
+                    tvar                    numeric NULL,
+                    marginal_var            numeric NULL,
+                    marginal_tvar           numeric NULL,
+                    insert_time             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    PRIMARY KEY (as_of_date, account_id, pos_id)
+                )
+            """)
+            cur.execute("""
                 CREATE TABLE IF NOT EXISTS proc_asof_date (
                     as_of_date  DATE      NOT NULL,
                     updated_at  TIMESTAMP NOT NULL DEFAULT NOW()
@@ -309,6 +393,22 @@ def migrate_tables() -> None:
                 cur.execute(f"ALTER TABLE db_portfolio_summary ADD COLUMN IF NOT EXISTS {col};")
             for col in drop_cols:
                 cur.execute(f"ALTER TABLE db_portfolio_summary DROP COLUMN IF EXISTS {col};")
+            # account hierarchy
+            cur.execute("""
+                ALTER TABLE account
+                    ADD COLUMN IF NOT EXISTS parent_account_id INT DEFAULT NULL
+                        REFERENCES account(account_id);
+            """)
+            # per-user default account
+            cur.execute("""
+                ALTER TABLE account_access
+                    ADD COLUMN IF NOT EXISTS is_default BOOLEAN NOT NULL DEFAULT FALSE;
+            """)
+            cur.execute("""
+                CREATE UNIQUE INDEX IF NOT EXISTS uq_account_access_default
+                    ON account_access (user_id)
+                    WHERE is_default = TRUE;
+            """)
         conn.commit()
 
 

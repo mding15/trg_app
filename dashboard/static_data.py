@@ -214,3 +214,26 @@ ASSET_ALLOCATION_DRILLDOWN = [
     {"class_name": "Alternatives", "sc1": "Private Credit",   "ticker": "LODUT",   "mv_weight": 0.0200, "var_contrib": 0.0139},
     {"class_name": "Alternatives", "sc1": "Private Credit",   "ticker": "ISHVF",   "mv_weight": 0.0200, "var_contrib": 0.0142},
 ]
+
+RISK_METRICS = [
+    {"type": "Volatility",  "portfolio": 0.1230, "benchmark": 0.0980},
+    {"type": "VaR 99%",     "portfolio": 0.0124, "benchmark": 0.0098},
+]
+
+RISK_ADJUSTED_RETURN = [
+    {"type": "Sharpe (Vol)", "portfolio":  1.42, "benchmark":  1.15},
+    {"type": "Sharpe (VaR)", "portfolio":  1.19, "benchmark":  0.96},
+]
+
+TOP_RISKS = [
+    {"Ticker": "AEUUU",  "Security_Name": "Fixed Income ETF A",        "VaR_Contrib":  0.3079, "MV_Weight": 0.19},
+    {"Ticker": "NUHGZ",  "Security_Name": "Commodity Gold Fund",        "VaR_Contrib":  0.1184, "MV_Weight": 0.19},
+    {"Ticker": "CSTNL",  "Security_Name": "Equity ETF Core",            "VaR_Contrib":  0.1003, "MV_Weight": 0.025},
+    {"Ticker": "SSDRF",  "Security_Name": "Equity Fund Select",         "VaR_Contrib":  0.0701, "MV_Weight": 0.02},
+    {"Ticker": "JPMMZ",  "Security_Name": "Equity Fund Global",         "VaR_Contrib":  0.0649, "MV_Weight": 0.02},
+    {"Ticker": "AGACZ",  "Security_Name": "Commodity Gas Trust",        "VaR_Contrib":  0.0560, "MV_Weight": 0.10},
+    {"Ticker": "MFMER",  "Security_Name": "Equity Stock Mid",           "VaR_Contrib":  0.0541, "MV_Weight": 0.02},
+    {"Ticker": "TIESI",  "Security_Name": "Equity Fund Income",         "VaR_Contrib":  0.0479, "MV_Weight": 0.02},
+    {"Ticker": "EUEIC",  "Security_Name": "Fixed Income Bond EUR",      "VaR_Contrib": -0.0124, "MV_Weight": 0.09},
+    {"Ticker": "USD.CCY","Security_Name": "Cash Money Market",          "VaR_Contrib": -0.0051, "MV_Weight": 0.05},
+]

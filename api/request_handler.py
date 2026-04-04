@@ -702,10 +702,11 @@ def get_user_approval_data(username, input_data=None):
 
 
     sql = """
-    select  u.user_id, concat(u.firstname, ' ', u.lastname) as username, u.email, a.status as approval, u.role, u.client_id, u.create_date  
+    select  u.user_id, concat(u.firstname, ' ', u.lastname) as username, u.email, a.status as approval, u.role, u.client_id, c.client_name, u.create_date
     from "user" u
-    left join approval a on a.id = u.approval 
-    order by u.create_date desc 
+    left join approval a on a.id = u.approval
+    left join client c on c.client_id = u.client_id
+    order by u.create_date desc
     """
     
     data = []

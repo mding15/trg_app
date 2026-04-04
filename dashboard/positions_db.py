@@ -201,24 +201,33 @@ def get_account_ids_for_user(username: str) -> list[int]:
 
 def get_accounts_for_user(username: str) -> list[dict]:
     """
-    Return all accounts the given username has access to, ordered by account_id.
+    Return all accounts the given username has access to.
+    Default account (is_default=True) is returned first, then by account_id.
     Joins: user -> account_access -> account.
-    Returns a list of {account_id, account_name} dicts.
+    Returns a list of {account_id, account_name, short_name, is_default} dicts.
     """
     with pg_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT a.account_id, a.account_name
+                SELECT a.account_id, a.account_name, a.short_name, aa.is_default
                 FROM "user" u
                 JOIN account_access aa ON aa.user_id = u.user_id
                 JOIN account a ON a.account_id = aa.account_id
                 WHERE u.username = %s
-                ORDER BY a.account_id
+                ORDER BY aa.is_default DESC, a.account_id
                 """,
                 (username,),
             )
-            result = [{"account_id": row[0], "account_name": row[1]} for row in cur.fetchall()]
+            result = [
+                {
+                    "account_id":   row[0],
+                    "account_name": row[1],
+                    "short_name":   row[2],
+                    "is_default":   row[3],
+                }
+                for row in cur.fetchall()
+            ]
             logger.debug("get_accounts_for_user(%r) -> %r", username, result)
             return result
 
