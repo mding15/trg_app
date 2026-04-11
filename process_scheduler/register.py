@@ -17,9 +17,25 @@ import urllib.request
 import urllib.error
 from pathlib import Path
 
+import jwt
+
 SCHEDULER_URL = 'https://engine.tailriskglobal.com/scheduler'
 BASE_PATH     = '/home/ec2-user'
 JOBS_FILE     = Path(__file__).parent / 'jobs.json'
+
+_CONFIG_DIR   = Path(__file__).resolve().parent.parent.parent / 'config'
+
+
+def _load_token() -> str:
+    """Generate a JWT token using SECRET_KEY from app_config.json and
+    SYS_USERNAME from config.json."""
+    with open(_CONFIG_DIR / 'app_config.json') as f:
+        app_cfg = json.load(f)
+    with open(_CONFIG_DIR / 'config.json') as f:
+        cfg = json.load(f)
+    secret   = app_cfg['SECRET_KEY']
+    username = cfg['SYS_USERNAME']
+    return jwt.encode({'username': username}, secret, algorithm='HS256')
 
 
 def _load_jobs() -> list[dict]:
@@ -33,13 +49,13 @@ def _build_payload(job: dict) -> dict:
     return payload
 
 
-def register_job(job: dict) -> None:
+def register_job(job: dict, token: str) -> None:
     """Register or update a single job in the scheduler via PUT, falling back to POST."""
     process_id = job['id']
     payload    = _build_payload(job)
 
     # Try PUT first (update existing)
-    url = f'{SCHEDULER_URL}/api/processes/{process_id}'
+    url = f'{SCHEDULER_URL}/api/processes/{process_id}?token={token}'
     put_body = {k: v for k, v in payload.items() if k != 'id'}
     req = urllib.request.Request(
         url, data=json.dumps(put_body).encode(), method='PUT',
@@ -56,7 +72,7 @@ def register_job(job: dict) -> None:
             raise
 
     # 404 — process doesn't exist yet, create it via POST
-    url = f'{SCHEDULER_URL}/api/processes'
+    url = f'{SCHEDULER_URL}/api/processes?token={token}'
     req = urllib.request.Request(
         url, data=json.dumps(payload).encode(), method='POST',
         headers={'Content-Type': 'application/json'},
@@ -71,19 +87,21 @@ def register_job(job: dict) -> None:
 
 
 def register_all() -> None:
-    jobs = _load_jobs()
+    token = _load_token()
+    jobs  = _load_jobs()
     print(f"Registering {len(jobs)} job(s) from {JOBS_FILE}")
     for job in jobs:
-        register_job(job)
+        register_job(job, token)
 
 
 def register_by_id(process_id: str) -> None:
-    jobs = _load_jobs()
+    token = _load_token()
+    jobs  = _load_jobs()
     matches = [j for j in jobs if j['id'] == process_id]
     if not matches:
         print(f"No job with id '{process_id}' found in {JOBS_FILE}")
         sys.exit(1)
-    register_job(matches[0])
+    register_job(matches[0], token)
 
 
 if __name__ == '__main__':

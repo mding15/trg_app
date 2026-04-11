@@ -13,9 +13,11 @@ Steps:
        f. Write to db_positions
 
 Usage:
-    python dashboard_process.py                   # as_of_date from proc_asof_date table
-    python dashboard_process.py --date 2026-03-29 # specific date
-    python dashboard_process.py --register        # register/update job in scheduler
+    python dashboard_process.py                                    # as_of_date from proc_asof_date table
+    python dashboard_process.py --date 2026-03-29                  # specific date
+    python dashboard_process.py --date 2026-03-29 --account-id 5  # single account, specific date
+    python dashboard_process.py --account-id 5                    # single account, latest date
+    python dashboard_process.py --register                        # register/update job in scheduler
 """
 from __future__ import annotations
 
@@ -28,7 +30,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 
 import pandas as pd
 
-from database2 import pg_connection
+from database2 import pg_connection, get_proc_asof_date
 from dashboard.positions_calc import (
     get_account_ids_on_date,
     get_positions_on_date,
@@ -47,14 +49,15 @@ from dashboard.positions_db import (
 
 # ── logging setup ──────────────────────────────────────────────────────────────
 
-def _setup_logger(as_of_date) -> logging.Logger:
+def _setup_logger(as_of_date, account_id=None) -> logging.Logger:
     log_dir = os.path.join(os.path.dirname(__file__), '..', '..', 'log')
     os.makedirs(log_dir, exist_ok=True)
+    account_suffix = f'_account{account_id}' if account_id is not None else ''
     log_file = os.path.join(
         log_dir,
-        f'dashboard_process_{as_of_date}_{datetime.now().strftime("%Y%m%d_%H%M%S")}.log',
+        f'dashboard_process_{as_of_date}{account_suffix}_{datetime.now().strftime("%Y%m%d_%H%M%S")}.log',
     )
-    logger = logging.getLogger(f'dashboard_process_{as_of_date}')
+    logger = logging.getLogger(f'dashboard_process_{as_of_date}{account_suffix}')
     logger.setLevel(logging.DEBUG)
     logger.handlers.clear()
 
@@ -73,17 +76,6 @@ def _setup_logger(as_of_date) -> logging.Logger:
 
 # ── helpers ────────────────────────────────────────────────────────────────────
 
-def _get_proc_asof_date() -> str:
-    """Return as_of_date from proc_asof_date table as 'YYYY-MM-DD'. Raises if missing."""
-    with pg_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute('SELECT as_of_date FROM proc_asof_date LIMIT 1')
-            row = cur.fetchone()
-            if not row or row[0] is None:
-                raise RuntimeError('proc_asof_date table is empty — cannot determine as_of_date')
-            return row[0].isoformat() if hasattr(row[0], 'isoformat') else str(row[0])
-
-
 def _build_mv_rows(df: pd.DataFrame) -> list[dict]:
     """Aggregate market_value by security_id and return as list of {security_id, market_value}."""
     df = df.copy()
@@ -98,22 +90,26 @@ def _build_mv_rows(df: pd.DataFrame) -> list[dict]:
 
 # ── main ───────────────────────────────────────────────────────────────────────
 
-def run(as_of_date=None) -> None:
+def run(as_of_date=None, account_id=None) -> None:
     if as_of_date is None:
-        as_of_date = _get_proc_asof_date()
+        as_of_date = get_proc_asof_date()
 
-    logger = _setup_logger(as_of_date)
+    logger = _setup_logger(as_of_date, account_id)
     logger.info(f"=== Dashboard process started for as_of_date={as_of_date} ===")
 
-    # 1. Get all account_ids for this date
-    with pg_connection() as conn:
-        account_ids = get_account_ids_on_date(conn, as_of_date)
+    # 1. Determine account_ids to process
+    if account_id is not None:
+        account_ids = [account_id]
+        logger.info(f"Single-account mode: account_id={account_id}")
+    else:
+        with pg_connection() as conn:
+            account_ids = get_account_ids_on_date(conn, as_of_date)
 
-    if not account_ids:
-        logger.warning("No accounts found for as_of_date. Aborting.")
-        return
+        if not account_ids:
+            logger.warning("No accounts found for as_of_date. Aborting.")
+            return
 
-    logger.info(f"Processing {len(account_ids)} account(s): {account_ids}")
+        logger.info(f"Processing {len(account_ids)} account(s): {account_ids}")
 
     # 2. Process each account
     for account_id in account_ids:
@@ -135,13 +131,13 @@ def run(as_of_date=None) -> None:
 
         # b. Compute and write portfolio summary
         delete_portfolio_summary(account_id, as_of_date)
-        summary = compute_portfolio_summary(account_id)
+        summary = compute_portfolio_summary(account_id, as_of_date=as_of_date)
         write_portfolio_summary(account_id, summary)
         logger.info(f"Portfolio summary written  aum={summary.get('aum')}  asOfDate={summary.get('asOfDate')}")
 
         # c. Compute and write positions
         delete_positions(account_id, as_of_date)
-        positions = compute_positions(account_id)
+        positions = compute_positions(account_id, as_of_date=as_of_date)
         write_positions(account_id, as_of_date, positions)
         logger.info(f"Wrote {len(positions)} positions to db_positions.")
 
@@ -151,14 +147,17 @@ def run(as_of_date=None) -> None:
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description='Run dashboard computation process')
+    mutex = parser.add_mutually_exclusive_group()
+    mutex.add_argument('--register', action='store_true',
+                       help='Register/update this job in the scheduler')
+    mutex.add_argument('--account-id', metavar='ACCOUNT_ID', type=int, default=None,
+                       help='Process a single account_id only (default: all accounts)')
     parser.add_argument('--date', metavar='YYYY-MM-DD', default=None,
                         help='as_of_date to process (default: read from proc_asof_date table)')
-    parser.add_argument('--register', action='store_true',
-                        help='Register/update this job in the scheduler')
     args = parser.parse_args()
 
     if args.register:
         from process_scheduler.register import register_by_id
         register_by_id('dashboard_process')
     else:
-        run(as_of_date=args.date)
+        run(as_of_date=args.date, account_id=args.account_id)

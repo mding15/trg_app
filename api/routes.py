@@ -49,6 +49,7 @@ import requests
 from flask import request, jsonify, send_from_directory, make_response
 from flasgger import Swagger
 import datetime
+import sqlalchemy.exc
 
 from trg_config import config
 
@@ -58,6 +59,7 @@ from api import create_account, schedule_demo_handler, request_demo_handler, sso
 from api import portfolios
 from api.auth import token_required, ops_role_required, authenticate
 from api import upload_handler
+from api import account_mgmt
 
 from database.models import User as User
 from database import db_utils, model_aux, ms_sql_server
@@ -109,6 +111,9 @@ def login():
         }))
 
         return resp
+    except sqlalchemy.exc.SQLAlchemyError as e:
+        logger.error(f'Database error during login: {e}')
+        return jsonify({'error': 'Service temporarily unavailable. Please try again later.'}), 503
     except Exception as e:
         return jsonify({'error': str(e)}), 401
 
@@ -127,6 +132,9 @@ def ops_login():
             'firstname': user.firstname,
             'lastname': user.lastname
         })
+    except sqlalchemy.exc.SQLAlchemyError as e:
+        logger.error(f'Database error during ops login: {e}')
+        return jsonify({'error': 'Service temporarily unavailable. Please try again later.'}), 503
     except Exception as e:
         return jsonify({'error': str(e)}), 401
 
@@ -258,6 +266,90 @@ def update_entitlement(username):
 @ops_role_required
 def get_entitlement_1client(username):
     return api_request('get_entitlement_1client', username, request)
+
+#####################################################################################
+# ACCOUNT MANAGEMENT (ops)
+
+@app.route('/api/ops/clients', methods=['GET'])
+@ops_role_required
+def ops_get_clients(username):
+    try:
+        return jsonify(account_mgmt.get_clients()), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/ops/accounts', methods=['GET'])
+@ops_role_required
+def ops_get_accounts(username):
+    client_id = request.args.get('client_id', type=int)
+    if client_id is None:
+        return jsonify({'error': 'client_id is required'}), 400
+    try:
+        return jsonify(account_mgmt.get_accounts(client_id)), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/ops/account_access', methods=['GET'])
+@ops_role_required
+def ops_get_account_access(username):
+    account_id = request.args.get('account_id', type=int)
+    if account_id is None:
+        return jsonify({'error': 'account_id is required'}), 400
+    try:
+        return jsonify(account_mgmt.get_account_access(account_id)), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/ops/client_users', methods=['GET'])
+@ops_role_required
+def ops_get_client_users(username):
+    client_id = request.args.get('client_id', type=int)
+    if client_id is None:
+        return jsonify({'error': 'client_id is required'}), 400
+    try:
+        return jsonify(account_mgmt.get_client_users(client_id)), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/ops/account_access', methods=['POST'])
+@ops_role_required
+def ops_add_account_access(username):
+    data = request.get_json() or {}
+    account_id = data.get('account_id')
+    user_id = data.get('user_id')
+    is_default = data.get('is_default', False)
+    if not account_id or not user_id:
+        return jsonify({'error': 'account_id and user_id are required'}), 400
+    try:
+        new_id = account_mgmt.add_account_access(account_id, user_id, is_default)
+        return jsonify({'id': new_id}), 201
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 409
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/ops/accounts', methods=['POST'])
+@ops_role_required
+def ops_create_account(username):
+    data = request.get_json() or {}
+    account_name = data.get('account_name', '').strip()
+    short_name = data.get('short_name', '').strip()
+    owner_id = data.get('owner_id')
+    client_id = data.get('client_id')
+    parent_account_id = data.get('parent_account_id') or None
+    if not account_name or not owner_id or not client_id:
+        return jsonify({'error': 'account_name, owner_id, and client_id are required'}), 400
+    try:
+        new_id = account_mgmt.create_account(account_name, short_name, owner_id, client_id, parent_account_id)
+        return jsonify({'account_id': new_id}), 201
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
 
 @app.route('/api/upload_security', methods=['POST'])
 @token_required
@@ -568,12 +660,13 @@ from dashboard.positions_db import (
     read_risk_alerts,
     count_risk_alerts,
     read_var_limit,
+    read_risk_parameters,
     compute_chart_data,
 )
 from dashboard.stress_test import read_stress_results
 from dashboard.static_data import (
     RISK, RISK_CONTRIBUTIONS, FACTOR_EXPOSURES_V2, ASSET_ALLOCATION_DRILLDOWN,
-    RISK_METRICS, RISK_ADJUSTED_RETURN, TOP_RISKS,
+    RISK_METRICS, RISK_ADJUSTED_RETURN, TOP_RISKS, VAR_HISTORY,
 )
 from dashboard.bar_chart_data import (
     read_asset_drilldown,
@@ -679,6 +772,19 @@ def get_allocation(username):
 
 # ── Risk page ─────────────────────────────────────────────────────────────────
 
+@app.route("/api/risk/parameters")
+@token_required
+def get_risk_parameters(username):
+    account_id, err = _get_account_id(username=username)
+    if err:
+        return err
+    try:
+        data = read_risk_parameters(account_id)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    return jsonify(data)
+
+
 @app.route("/api/risk/summary")
 @token_required
 def get_risk_summary(username):
@@ -779,6 +885,14 @@ def get_risk_adjusted_return(username):
 @token_required
 def get_top_risks(username):
     return jsonify(TOP_RISKS)
+
+
+@app.route("/api/risk/var_history")
+@token_required
+def get_var_history(username):
+    period = request.args.get("period", "3M")
+    data = VAR_HISTORY.get(period, VAR_HISTORY["3M"])
+    return jsonify(data)
 
 
 @app.route("/api/risk/factors")

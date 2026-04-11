@@ -22,30 +22,65 @@ from database2 import pg_connection
 
 # ── read ───────────────────────────────────────────────────────────────────────
 
-def fetch_proc_positions(as_of_date, feed_source: str) -> pd.DataFrame:
-    """Fetch proc_positions rows for the given as_of_date and feed_source."""
-    with pg_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                'SELECT * FROM proc_positions WHERE as_of_date = %s AND feed_source = %s',
-                (as_of_date, feed_source),
-            )
-            cols = [desc[0] for desc in cur.description]
-            df = pd.DataFrame(cur.fetchall(), columns=cols)
-            return df.drop(columns=[c for c in ('id', 'insert_time') if c in df.columns])
+def fetch_proc_positions(
+    as_of_date,
+    feed_source: str | None = None,
+    account_ids: list[int] | None = None,
+) -> pd.DataFrame:
+    """
+    Fetch proc_positions rows for the given as_of_date.
+    If feed_source is provided, only rows for that feed_source are returned.
+    If account_ids is provided, only rows for those account_ids are returned.
+    Falls back to proc_positions_hist if proc_positions returns no rows.
+    """
+    conditions = ['as_of_date = %s']
+    params: list = [as_of_date]
+
+    if feed_source is not None:
+        conditions.append('feed_source = %s')
+        params.append(feed_source)
+
+    if account_ids is not None:
+        conditions.append('account_id = ANY(%s)')
+        params.append(account_ids)
+
+    base_sql = 'WHERE ' + ' AND '.join(conditions)
+
+    def _query(table: str) -> pd.DataFrame:
+        sql = f'SELECT * FROM {table} {base_sql}'
+        with pg_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, params)
+                cols = [desc[0] for desc in cur.description]
+                df = pd.DataFrame(cur.fetchall(), columns=cols)
+                return df.drop(columns=[c for c in ('id', 'insert_time') if c in df.columns])
+
+    df = _query('proc_positions')
+    if df.empty:
+        df = _query('proc_positions_hist')
+    return df
 
 
-def fetch_latest_as_of_date(feed_source: str) -> str:
-    """Return the latest as_of_date in proc_positions for the given feed_source as an ISO string."""
+def fetch_latest_as_of_date(feed_source: str | None = None) -> str:
+    """
+    Return the latest as_of_date in proc_positions as an ISO string.
+    If feed_source is provided, filters to that feed_source only.
+    """
     with pg_connection() as conn:
         with conn.cursor() as cur:
-            cur.execute(
-                'SELECT MAX(as_of_date) FROM proc_positions WHERE feed_source = %s',
-                (feed_source,),
-            )
+            if feed_source is not None:
+                cur.execute(
+                    'SELECT MAX(as_of_date) FROM proc_positions WHERE feed_source = %s',
+                    (feed_source,),
+                )
+            else:
+                cur.execute('SELECT MAX(as_of_date) FROM proc_positions')
             result = cur.fetchone()[0]
     if result is None:
-        raise ValueError(f'No rows found in proc_positions for feed_source={feed_source!r}.')
+        raise ValueError(
+            f'No rows found in proc_positions'
+            + (f' for feed_source={feed_source!r}.' if feed_source else '.')
+        )
     return result.isoformat()
 
 
@@ -128,7 +163,7 @@ def insert_results(results: pd.DataFrame, as_of_date) -> int:
 
     _TABLE_COLS = [
         'as_of_date', 'account_id', 'pos_id',
-        'security_id', 'security_name', 'isin', 'cusip', 'ticker', 'broker_account',
+        'security_id', 'security_name', 'isin', 'cusip', 'ticker', 'broker_account', 'broker',
         'quantity', 'market_value', 'currency', 'last_price', 'last_price_date',
         'asset_class', 'asset_type', 'class', 'sc1', 'sc2',
         'country', 'region', 'sector', 'industry',

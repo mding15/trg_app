@@ -2,6 +2,8 @@ __pycache__/
 _norton_/
 logs/
 output/
+Excel/
+CSV/
 test_env.py
 *.log
 *.tmp

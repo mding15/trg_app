@@ -1,7 +1,7 @@
 """
-calculate_var.py — Calculate VaR for all accounts of a given feed_source and store results in position_var.
+calculate_var.py — Calculate VaR for all accounts and store results in position_var.
 
-Main function: calculate_var(feed_source, as_of_date=None)
+Main function: calculate_var(feed_source=None, as_of_date=None, account_id=None)
 
 Steps:
     1. Preprocess positions from proc_positions (column mapping, security info, prices).
@@ -10,8 +10,13 @@ Steps:
     Failed accounts are logged and skipped.
 
 Usage:
-    python calculate_var.py mssb              # uses latest as_of_date for feed_source=mssb
-    python calculate_var.py mssb 2025-09-30   # uses specified as_of_date
+    python calculate_var.py                                          # all feeds, latest date
+    python calculate_var.py --feed-source mssb                      # mssb only, latest date
+    python calculate_var.py --date 2025-09-30                        # all feeds, specific date
+    python calculate_var.py --feed-source mssb --date 2025-09-30    # mssb, specific date
+    python calculate_var.py --feed-source mssb --account-id 5       # one leaf account
+    python calculate_var.py --feed-source mssb --date 2025-09-30 --account-id 5
+    python calculate_var.py --feed-source mssb --date 2025-09-30 --account-id 12
 """
 from __future__ import annotations
 
@@ -33,14 +38,16 @@ from process2.preprocess_var import preprocess_var
 
 # ── logging setup ─────────────────────────────────────────────────────────────
 
-def _setup_logger(feed_source: str, as_of_date) -> logging.Logger:
+def _setup_logger(feed_source: str | None, as_of_date, account_id=None) -> logging.Logger:
     log_dir = os.path.join(os.path.dirname(__file__), '..', '..', 'log')
     os.makedirs(log_dir, exist_ok=True)
+    fs_part        = f'{feed_source}_' if feed_source is not None else ''
+    account_suffix = f'_account{account_id}' if account_id is not None else ''
     log_file = os.path.join(
         log_dir,
-        f'calculate_var_{feed_source}_{as_of_date}_{datetime.now().strftime("%Y%m%d_%H%M%S")}.log',
+        f'calculate_var_{fs_part}{as_of_date}{account_suffix}_{datetime.now().strftime("%Y%m%d_%H%M%S")}.log',
     )
-    logger = logging.getLogger(f'calculate_var_{feed_source}_{as_of_date}')
+    logger = logging.getLogger(f'calculate_var_{fs_part}{as_of_date}{account_suffix}')
     logger.setLevel(logging.DEBUG)
     logger.handlers.clear()
 
@@ -216,55 +223,137 @@ def _merge_positions_for_parent(
     return merged.reset_index(drop=True)
 
 
+# ── VaR runner helper ─────────────────────────────────────────────────────────
+
+def _run_var(
+    label: str,
+    active: pd.DataFrame,
+    excluded: pd.DataFrame,
+    params: dict,
+    as_of_date,
+    logger: logging.Logger,
+) -> int:
+    """
+    Run VaR engine on active positions, re-attach excluded rows with NULL VaR columns,
+    insert into position_var, and return the number of rows inserted.
+    Raises on engine or DB failure — caller decides whether to skip or abort.
+    """
+    with app.app_context():
+        DATA = engine.calc_VaR(active, params)
+
+    result = build_results(active, DATA)
+
+    if not excluded.empty:
+        new_cols     = [c for c in result.columns if c not in excluded.columns]
+        excluded_out = excluded.reindex(columns=result.columns)
+        for col in new_cols:
+            excluded_out[col] = None
+        result = pd.concat([result, excluded_out], ignore_index=True)
+
+    n = insert_results(result, as_of_date)
+    logger.info(f"{label}: {len(active)} positions calculated, {len(excluded)} excluded, {n} rows inserted")
+    return n
+
+
 # ── main ───────────────────────────────────────────────────────────────────────
 
-def calculate_var(feed_source: str, as_of_date=None):
+def calculate_var(feed_source: str | None = None, as_of_date=None, account_id: int | None = None):
     """
-    Run VaR for every account_id in proc_positions for the given feed_source and as_of_date.
-    If as_of_date is not provided, the latest as_of_date for the feed_source is used.
+    Run VaR for the given feed_source and as_of_date.
+
+    feed_source=None — process all feed sources combined.
+    account_id=None  — process all leaf accounts then all parent accounts (full run).
+    account_id=<leaf>   — process that single leaf account only.
+    account_id=<parent> — fetch leaf descendants' positions, merge, run VaR for parent only.
+
+    If as_of_date is not provided, the latest as_of_date across proc_positions is used.
     """
     if as_of_date is None:
         as_of_date = fetch_latest_as_of_date(feed_source)
 
-    logger = _setup_logger(feed_source, as_of_date)
-    logger.info(f"=== Start calculating VaR for feed_source={feed_source!r} as_of_date={as_of_date} ===")
+    logger = _setup_logger(feed_source, as_of_date, account_id)
+
+    # ── Single account mode ───────────────────────────────────────────────────
+    if account_id is not None:
+        parent_map = _load_parent_map()
+
+        if account_id in parent_map:
+            # ── Parent account ────────────────────────────────────────────────
+            leaf_ids = _get_leaf_descendants(account_id, parent_map)
+            logger.info(
+                f"=== Start VaR: feed_source={feed_source!r} as_of_date={as_of_date} "
+                f"parent account_id={account_id} leaf_ids={leaf_ids} ==="
+            )
+            try:
+                params, all_positions = preprocess_var(as_of_date, feed_source, account_ids=leaf_ids)
+            except Exception as e:
+                logger.error(f"preprocess_var failed: {e}")
+                raise
+
+            merged = _merge_positions_for_parent(all_positions, leaf_ids, account_id)
+            if merged.empty:
+                logger.warning(
+                    f"No positions found for parent account_id={account_id} "
+                    f"leaf_ids={leaf_ids} — nothing to insert."
+                )
+                return
+
+            excluded = merged[merged['excluded'] == True]
+            active   = merged[merged['excluded'] != True]
+            try:
+                n = _run_var(f"parent_account_id={account_id}", active, excluded, params, as_of_date, logger)
+            except Exception as e:
+                logger.error(f"parent_account_id={account_id}: FAILED — {e}")
+                raise
+
+        else:
+            # ── Leaf account ──────────────────────────────────────────────────
+            logger.info(
+                f"=== Start VaR: feed_source={feed_source!r} as_of_date={as_of_date} "
+                f"leaf account_id={account_id} ==="
+            )
+            try:
+                params, all_positions = preprocess_var(as_of_date, feed_source, account_ids=[account_id])
+            except Exception as e:
+                logger.error(f"preprocess_var failed: {e}")
+                raise
+
+            acc_pos  = all_positions[all_positions['account_id'] == account_id]
+            excluded = acc_pos[acc_pos['excluded'] == True]
+            active   = acc_pos[acc_pos['excluded'] != True]
+            try:
+                n = _run_var(f"account_id={account_id}", active, excluded, params, as_of_date, logger)
+            except Exception as e:
+                logger.error(f"account_id={account_id}: FAILED — {e}")
+                raise
+
+        logger.info(f"Total: {n} rows inserted")
+        logger.info("=== Done ===")
+        return
+
+    # ── Full run (no account_id specified) ────────────────────────────────────
+    logger.info(f"=== Start VaR: feed_source={feed_source!r} as_of_date={as_of_date} (all accounts) ===")
 
     try:
         params, all_positions = preprocess_var(as_of_date, feed_source)
     except Exception as e:
         logger.error(f"preprocess_var failed: {e}")
         raise
-    account_ids   = all_positions['account_id'].unique()
-    total_inserted = 0
 
-    for account_id in account_ids:
-        acc_pos  = all_positions[all_positions['account_id'] == account_id]
+    leaf_account_ids = all_positions['account_id'].unique()
+    total_inserted   = 0
+
+    for acct_id in leaf_account_ids:
+        acc_pos  = all_positions[all_positions['account_id'] == acct_id]
         excluded = acc_pos[acc_pos['excluded'] == True]
         active   = acc_pos[acc_pos['excluded'] != True]
-
         try:
-            with app.app_context():
-                DATA = engine.calc_VaR(active, params)
-
-            result = build_results(active, DATA)
-
-            if not excluded.empty:
-                new_cols     = [c for c in result.columns if c not in excluded.columns]
-                excluded_out = excluded.reindex(columns=result.columns)
-                for col in new_cols:
-                    excluded_out[col] = None
-                result = pd.concat([result, excluded_out], ignore_index=True)
-
-            n = insert_results(result, as_of_date)
-            total_inserted += n
-            logger.info(f"account_id={account_id}: {len(active)} positions calculated, "
-                        f"{len(excluded)} excluded, {n} rows inserted")
-
+            total_inserted += _run_var(f"account_id={acct_id}", active, excluded, params, as_of_date, logger)
         except Exception as e:
-            logger.error(f"account_id={account_id}: FAILED — {e}")
+            logger.error(f"account_id={acct_id}: FAILED — {e}")
             continue
 
-    logger.info(f"Leaf accounts: {total_inserted} rows inserted across {len(account_ids)} account(s)")
+    logger.info(f"Leaf accounts: {total_inserted} rows inserted across {len(leaf_account_ids)} account(s)")
 
     # ── Parent account VaR ────────────────────────────────────────────────────
     parent_map = _load_parent_map()
@@ -288,27 +377,8 @@ def calculate_var(feed_source: str, as_of_date=None):
 
             excluded = merged[merged['excluded'] == True]
             active   = merged[merged['excluded'] != True]
-
             try:
-                with app.app_context():
-                    DATA = engine.calc_VaR(active, params)
-
-                result = build_results(active, DATA)
-
-                if not excluded.empty:
-                    new_cols     = [c for c in result.columns if c not in excluded.columns]
-                    excluded_out = excluded.reindex(columns=result.columns)
-                    for col in new_cols:
-                        excluded_out[col] = None
-                    result = pd.concat([result, excluded_out], ignore_index=True)
-
-                n = insert_results(result, as_of_date)
-                total_inserted += n
-                logger.info(
-                    f"parent_account_id={parent_id}: {len(active)} positions calculated, "
-                    f"{len(excluded)} excluded, {n} rows inserted"
-                )
-
+                total_inserted += _run_var(f"parent_account_id={parent_id}", active, excluded, params, as_of_date, logger)
             except Exception as e:
                 logger.error(f"parent_account_id={parent_id}: FAILED — {e}")
                 continue
@@ -318,11 +388,14 @@ def calculate_var(feed_source: str, as_of_date=None):
 
 
 if __name__ == '__main__':
-    if len(sys.argv) < 2:
-        print('Usage: python calculate_var.py <feed_source> [as_of_date]')
-        print('  e.g. python calculate_var.py mssb')
-        print('  e.g. python calculate_var.py mssb 2025-09-30')
-        sys.exit(1)
-    _feed_source  = sys.argv[1]
-    _as_of_date   = sys.argv[2] if len(sys.argv) > 2 else None
-    calculate_var(_feed_source, _as_of_date)
+    import argparse
+    parser = argparse.ArgumentParser(description='Calculate VaR and store results in position_var.')
+    parser.add_argument('--feed-source', default=None, metavar='FEED_SOURCE',
+                        help='Feed source to process (e.g. mssb); default: all feed sources')
+    parser.add_argument('--date', metavar='YYYY-MM-DD',
+                        help='as_of_date to process (default: latest in proc_positions)')
+    parser.add_argument('--account-id', metavar='ACCOUNT_ID', type=int,
+                        help='Process a single account_id (leaf or parent); default: all accounts')
+    args = parser.parse_args()
+
+    calculate_var(args.feed_source, args.date, args.account_id)

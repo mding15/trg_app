@@ -57,8 +57,6 @@ def test_main(df):
     test_create_account()
 
     delete_portfolios()
-    
-    delete_user()
 
 
 ########################################################################################################
@@ -377,40 +375,6 @@ def test_create_account():
         }
     create_account.create_account(data)    
     
-    
-def delete_user(username):
-    
-    # username = 'test@trg.com'
-    
-    # delete
-    user = model_aux.get_user(username)  
-    client = user.client
-    pgroups = client.port_groups
-
-    # delete portfolios
-    port_id_list = []
-    pgroup_id_list = []
-    for pgroup in pgroups:
-        pgroup_id_list.append(pgroup.pgroup_id)
-        for port in pgroup.portfolios:
-            port_id_list.append(port.port_id)
-
-        
-    input_data = { 'PORT_ID_LIST': port_id_list }
-    request_handler.delete_portfolios(username, input_data)
-    
-    # delete entitlement
-    db_utils.delete('user_entitilement', 'port_group_id', pgroup_id_list)
-    
-    # delete pgroup
-    for pgroup_id in pgroup_id_list:
-        model_aux.delete_pgroup(pgroup_id)
-
-    # delete user
-    model_aux.delete_user(user)
-        
-    # delete client
-    model_aux.delete_client(client)
     
 
 def fix_entitilement():

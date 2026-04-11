@@ -23,6 +23,7 @@ from api import email2 as email2_util
 from api import db, bcrypt
 from database.models import User, Client
 from database.model_aux import add_client, add_client_report_url
+from api import account_mgmt
 
 from api.logging_config import get_logger
 logger = get_logger(__name__)
@@ -73,6 +74,19 @@ def create_account(data):
     db.session.add(user)
     db.session.commit()
     print(f'new user {user.user_id} has been created')
+
+    # for new clients: create a default account and grant the new user access
+    if not exists:
+        short_name = companyName[:15] if companyName else None
+        new_account_id = account_mgmt.create_account(
+            account_name=companyName,
+            short_name=short_name,
+            owner_id=user.user_id,
+            client_id=client_id,
+            parent_account_id=None,
+        )
+        account_mgmt.add_account_access(new_account_id, user.user_id, is_default=True)
+        logger.info(f'Created account {new_account_id} for new client {client_id} (owner: {user.user_id})')
 
     email_new_user_notification(user)
     

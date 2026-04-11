@@ -69,17 +69,26 @@ def build_params(as_of_date) -> dict:
 
 # ── main ───────────────────────────────────────────────────────────────────────
 
-def preprocess_var(as_of_date, feed_source: str) -> tuple[dict, pd.DataFrame]:
+def preprocess_var(
+    as_of_date,
+    feed_source: str | None = None,
+    account_ids: list[int] | None = None,
+) -> tuple[dict, pd.DataFrame]:
     """
     Build (params, positions) for VaR calculation from proc_positions.
 
-    as_of_date:  the as_of_date value in proc_positions to process.
-    feed_source: only rows with this feed_source are fetched.
+    as_of_date:   the as_of_date value in proc_positions to process.
+    feed_source:  only rows with this feed_source are fetched.
+    account_ids:  if provided, only rows for those account_ids are fetched.
     Returns (params dict, enriched positions DataFrame).
     """
-    positions = fetch_proc_positions(as_of_date, feed_source)
+    positions = fetch_proc_positions(as_of_date, feed_source, account_ids)
     if positions.empty:
-        raise ValueError(f'No proc_positions rows found for as_of_date={as_of_date}, feed_source={feed_source!r}')
+        acct_msg = f', account_ids={account_ids}' if account_ids is not None else ''
+        raise ValueError(
+            f'No proc_positions rows found for as_of_date={as_of_date}, '
+            f'feed_source={feed_source!r}{acct_msg}'
+        )
 
     positions = _map_columns(positions)
     positions = update_security_info(positions, asof_date=as_of_date)

@@ -12,6 +12,9 @@ Tables:
     broker_account       — broker account registry (account_id lookup for raw feeds)
     proc_positions_hist  — historical archive of displaced proc_positions rows
     position_var         — per-position risk/VaR metrics per (as_of_date, account_id, pos_id)
+    benchmark            — shared benchmark library (shared and custom per-account benchmarks)
+    benchmark_weights    — normalized asset class weights per benchmark (one row per asset class)
+    account_benchmark    — maps one active benchmark to each account (UNIQUE on account_id)
 """
 from __future__ import annotations
 
@@ -127,6 +130,7 @@ def create_tables() -> None:
                     asset_class     text NULL,
                     currency        text NOT NULL,
                     broker_account  text NOT NULL,
+                    broker          text NULL,
                     insert_time     TIMESTAMP NOT NULL DEFAULT NOW(),
                     last_price      numeric NULL,
                     last_price_date date NULL,
@@ -190,6 +194,7 @@ def create_tables() -> None:
                     asset_class     text NULL,
                     currency        text NOT NULL,
                     broker_account  text NOT NULL,
+                    broker          text NULL,
                     insert_time     TIMESTAMP NOT NULL DEFAULT NOW(),
                     archived_at     TIMESTAMP NOT NULL DEFAULT NOW(),
                     last_price      numeric NULL,
@@ -284,6 +289,7 @@ def create_tables() -> None:
                     cusip                   text NULL,
                     ticker                  text NULL,
                     broker_account          text NULL,
+                    broker                  text NULL,
                     quantity                numeric NULL,
                     market_value            numeric NULL,
                     currency                text NULL,
@@ -357,6 +363,38 @@ def create_tables() -> None:
                     message     TEXT         NULL,
                     status      VARCHAR(20)  NOT NULL DEFAULT 'new',
                     create_date TIMESTAMP    NOT NULL DEFAULT NOW()
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS benchmark (
+                    benchmark_id          SERIAL        PRIMARY KEY,
+                    benchmark_name        VARCHAR(100)  NOT NULL,
+                    description           TEXT,
+                    source_provider       VARCHAR(100),
+                    currency              VARCHAR(10),
+                    rebalancing_frequency VARCHAR(20),
+                    is_custom             BOOLEAN       NOT NULL DEFAULT FALSE,
+                    create_date           DATE          NOT NULL DEFAULT current_date
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS benchmark_weights (
+                    id           SERIAL       PRIMARY KEY,
+                    benchmark_id INT          NOT NULL REFERENCES benchmark (benchmark_id)
+                                              ON DELETE CASCADE,
+                    asset_class  VARCHAR(50)  NOT NULL,
+                    weight       NUMERIC(5,4) NOT NULL,
+                    CONSTRAINT chk_weight_range         CHECK (weight >= 0 AND weight <= 1),
+                    CONSTRAINT uq_benchmark_asset_class UNIQUE (benchmark_id, asset_class)
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS account_benchmark (
+                    id            SERIAL PRIMARY KEY,
+                    account_id    INT    NOT NULL REFERENCES account (account_id),
+                    benchmark_id  INT    NOT NULL REFERENCES benchmark (benchmark_id),
+                    assigned_date DATE   NOT NULL DEFAULT current_date,
+                    CONSTRAINT uq_account_benchmark UNIQUE (account_id)
                 )
             """)
 

@@ -129,11 +129,13 @@ def pct_return_total(current: float, base: float | None) -> float | None:
 
 # ── Main computation functions ────────────────────────────────────────────────
 
-def compute_portfolio_summary(account_id: int) -> dict:
+def compute_portfolio_summary(account_id: int, as_of_date=None) -> dict:
     """
     Compute portfolio-level summary for account_id.
     Current AUM and risk metrics come from position_var;
     return metrics are calculated from db_mv_history.
+
+    as_of_date: if provided, use that date; otherwise use the latest date in position_var.
 
     Risk metric formulas:
         var_1d_95  = SUM(marginal_var)
@@ -150,11 +152,14 @@ def compute_portfolio_summary(account_id: int) -> dict:
         top_five_conc = top-5 security MV / aum * 100  [%]
     """
     with pg_connection() as conn:
-        dates = get_latest_feed_dates(conn, n=1)
-        if not dates:
-            return {}
-
-        latest = dates[0]
+        if as_of_date is not None:
+            import datetime
+            latest = pd.to_datetime(as_of_date).date() if not isinstance(as_of_date, datetime.date) else as_of_date
+        else:
+            dates = get_latest_feed_dates(conn, n=1)
+            if not dates:
+                return {}
+            latest = dates[0]
         first_of_month = latest.replace(day=1)
         first_of_year  = latest.replace(month=1, day=1)
         one_year_ago   = latest.replace(year=latest.year - 1)
@@ -265,17 +270,22 @@ def compute_portfolio_summary(account_id: int) -> dict:
     }
 
 
-def compute_positions(account_id: int) -> list[dict]:
+def compute_positions(account_id: int, as_of_date=None) -> list[dict]:
     """
     Compute position-level data for account_id, aggregated by security_id.
     Current positions come from position_var; returns are calculated from db_mv_history.
+
+    as_of_date: if provided, use that date; otherwise use the latest date in position_var.
     """
     with pg_connection() as conn:
-        dates = get_latest_feed_dates(conn, n=1)
-        if not dates:
-            return []
-
-        latest = dates[0]
+        if as_of_date is not None:
+            import datetime
+            latest = pd.to_datetime(as_of_date).date() if not isinstance(as_of_date, datetime.date) else as_of_date
+        else:
+            dates = get_latest_feed_dates(conn, n=1)
+            if not dates:
+                return []
+            latest = dates[0]
         first_of_month = latest.replace(day=1)
         first_of_year  = latest.replace(month=1, day=1)
         one_year_ago   = latest.replace(year=latest.year - 1)

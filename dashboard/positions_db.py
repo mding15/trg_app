@@ -525,6 +525,59 @@ def read_var_limit(account_id: int) -> float | None:
     return float(row[0]) if row and row[0] is not None else None
 
 
+# ── Risk page parameters ──────────────────────────────────────────────────────
+
+def read_risk_parameters(account_id: int) -> dict:
+    """Return portfolio parameters for the Risk page parameters table.
+
+    Reads account_run_parameters for all run-time fields (name, dates, tail
+    measure, risk horizon, benchmark, return frequency, expected return,
+    base currency). AUM / portfolio size is fetched separately from
+    db_portfolio_summary because account_run_parameters has no market value.
+    """
+    arp_sql = """
+        SELECT "PortfolioName", "AsofDate", "ReportDate", "TailMeasure",
+               "RiskHorizon", "Benchmark", "ReturnFrequency", "ExpectedReturn",
+               "BaseCurrency"
+        FROM account_run_parameters
+        WHERE account_id = %s
+    """
+    ps_sql = """
+        SELECT aum, as_of_date
+        FROM db_portfolio_summary
+        WHERE account_id = %s
+        ORDER BY as_of_date DESC
+        LIMIT 1
+    """
+    with pg_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(arp_sql, (account_id,))
+            arp = cur.fetchone()
+            cur.execute(ps_sql, (account_id,))
+            ps = cur.fetchone()
+
+    def _fmt_date(d):
+        if d is None:
+            return None
+        return d.strftime("%Y-%m-%d") if hasattr(d, "strftime") else str(d)[:10]
+
+    aum     = ps[0] if ps else None
+    size_mm = round(float(aum) / 1e6, 1) if aum else None
+
+    return {
+        "portfolioName":   arp[0] if arp else None,
+        "portfolioSizeMm": size_mm,
+        "asOfDate":        _fmt_date(arp[1]) if arp else None,
+        "reportDate":      _fmt_date(arp[2]) if arp else None,
+        "tailMeasure":     arp[3] if arp else None,
+        "varVolWindow":    arp[4] if arp else None,
+        "benchmark":       arp[5] if arp else None,
+        "returnFrequency": arp[6] if arp else None,
+        "expectedReturns": arp[7] if arp else None,
+        "baseCurrency":    arp[8] if arp else None,
+    }
+
+
 # ── Chart data (computed from db_mv_history) ───────────────────────────────────
 
 def compute_chart_data(account_id: int, range_key: str) -> list[dict]:

@@ -3,8 +3,9 @@
 database2/__init__.py — PostgreSQL connection for the database2 / process2 layer.
 
 Provides:
-    pg_connection  — context manager that opens and closes a psycopg2 connection
+    pg_connection         — context manager that opens and closes a psycopg2 connection
     pg_create_connection() — raw connection factory (use pg_connection where possible)
+    get_proc_asof_date()  — read as_of_date from proc_asof_date table (returns ISO str)
 """
 import json
 import os
@@ -44,3 +45,17 @@ class pg_connection:
 
     def __exit__(self, exc_type, exc_value, traceback):
         self.conn.close()
+
+
+def get_proc_asof_date() -> str:
+    """Return as_of_date from proc_asof_date table as 'YYYY-MM-DD'.
+
+    Raises RuntimeError if the table is empty or the value is NULL.
+    """
+    with pg_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute('SELECT as_of_date FROM proc_asof_date LIMIT 1')
+            row = cur.fetchone()
+            if not row or row[0] is None:
+                raise RuntimeError('proc_asof_date table is empty — cannot determine as_of_date')
+            return row[0].isoformat() if hasattr(row[0], 'isoformat') else str(row[0])

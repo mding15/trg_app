@@ -17,9 +17,12 @@ Steps:
     7. Insert processed rows into proc_positions.
 
 Usage:
-    python process_mssb_positions.py                   # feed_date from proc_asof_date table
-    python process_mssb_positions.py --date 2025-01-15 # specific date
-    python process_mssb_positions.py --all             # all dates in mssb_posit
+    python process_mssb_positions.py                                  # feed_date from proc_asof_date table
+    python process_mssb_positions.py --date 2025-01-15                # specific date
+    python process_mssb_positions.py --all                            # all dates in mssb_posit
+    python process_mssb_positions.py --account-id 5                   # one account, default date
+    python process_mssb_positions.py --date 2025-01-15 --account-id 5 # one account, specific date
+    python process_mssb_positions.py --all --account-id 5             # one account, all dates
 """
 from __future__ import annotations
 
@@ -30,19 +33,20 @@ from datetime import datetime
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from database2 import pg_connection
+from database2 import pg_connection, get_proc_asof_date
 
 
 # ── logging setup ──────────────────────────────────────────────────────────────
 
-def _setup_logger(feed_date) -> logging.Logger:
+def _setup_logger(feed_date, account_id=None) -> logging.Logger:
     log_dir = os.path.join(os.path.dirname(__file__), '..', '..', 'log')
     os.makedirs(log_dir, exist_ok=True)
+    account_suffix = f'_account{account_id}' if account_id is not None else ''
     log_file = os.path.join(
         log_dir,
-        f'process_mssb_positions_{feed_date}_{datetime.now().strftime("%Y%m%d_%H%M%S")}.log',
+        f'process_mssb_positions_{feed_date}{account_suffix}_{datetime.now().strftime("%Y%m%d_%H%M%S")}.log',
     )
-    logger = logging.getLogger(f'process_mssb_{feed_date}')
+    logger = logging.getLogger(f'process_mssb_{feed_date}{account_suffix}')
     logger.setLevel(logging.DEBUG)
     logger.handlers.clear()
 
@@ -61,25 +65,39 @@ def _setup_logger(feed_date) -> logging.Logger:
 
 # ── batch cache loaders ────────────────────────────────────────────────────────
 
-def _load_account_cache(cur, raw_rows: list[dict]) -> dict[tuple, int]:
+def _load_account_cache(cur, raw_rows: list[dict], account_id=None) -> dict[tuple, int]:
     """
     Batch-load broker_account rows for all (account, routing_code) pairs in raw_rows.
     Returns {(account, routing_code): account_id}.
     Pairs not found in the table will be absent from the dict.
+    If account_id is given, only rows for that account_id are loaded — all others
+    will be absent from the cache and naturally skipped by the caller.
     """
     accounts = list({r.get('account') or '' for r in raw_rows})
     if not accounts:
         return {}
 
-    cur.execute(
-        """
-        SELECT account_id, broker_account, routing_code
-        FROM broker_account
-        WHERE broker = 'Morgan Stanley'
-          AND broker_account = ANY(%s)
-        """,
-        (accounts,),
-    )
+    if account_id is not None:
+        cur.execute(
+            """
+            SELECT account_id, broker_account, routing_code
+            FROM broker_account
+            WHERE broker = 'Morgan Stanley'
+              AND broker_account = ANY(%s)
+              AND account_id = %s
+            """,
+            (accounts, account_id),
+        )
+    else:
+        cur.execute(
+            """
+            SELECT account_id, broker_account, routing_code
+            FROM broker_account
+            WHERE broker = 'Morgan Stanley'
+              AND broker_account = ANY(%s)
+            """,
+            (accounts,),
+        )
     return {(row[1], row[2]): row[0] for row in cur.fetchall()}
 
 
@@ -317,11 +335,11 @@ def _archive_and_replace(cur, account_ids: list[int], feed_date, feed_source: st
         INSERT INTO proc_positions_hist
             (as_of_date, account_id, position_id, security_id, security_name,
              isin, cusip, ticker, quantity, market_value, asset_class, currency,
-             broker_account, last_price, last_price_date, feed_source, insert_time, archived_at)
+             broker_account, broker, last_price, last_price_date, feed_source, insert_time, archived_at)
         SELECT
             as_of_date, account_id, position_id, security_id, security_name,
             isin, cusip, ticker, quantity, market_value, asset_class, currency,
-            broker_account, last_price, last_price_date, feed_source, insert_time, NOW()
+            broker_account, broker, last_price, last_price_date, feed_source, insert_time, NOW()
         FROM proc_positions
         WHERE account_id = ANY(%s) AND as_of_date < %s AND feed_source = %s
         """,
@@ -350,16 +368,21 @@ def _archive_and_replace(cur, account_ids: list[int], feed_date, feed_source: st
 
 # ── main ───────────────────────────────────────────────────────────────────────
 
-def process_mssb_positions(feed_date) -> int:
+def process_mssb_positions(feed_date, account_id=None) -> int:
     """
-    Process all mssb_posit rows for feed_date and insert into proc_positions.
+    Process mssb_posit rows for feed_date and insert into proc_positions.
+    If account_id is given, only broker accounts belonging to that account_id
+    are processed; all other rows are skipped.
     Rows whose account cannot be resolved in broker_account are skipped and logged.
     For each account_id in the feed, older proc_positions rows are moved to
     proc_positions_hist and same-date rows are replaced.
     Returns the number of rows inserted.
     """
-    logger = _setup_logger(feed_date)
-    logger.info(f"=== Start processing mssb_posit for feed_date={feed_date} ===")
+    logger = _setup_logger(feed_date, account_id)
+    if account_id is not None:
+        logger.info(f"=== Start processing mssb_posit for feed_date={feed_date}, account_id={account_id} ===")
+    else:
+        logger.info(f"=== Start processing mssb_posit for feed_date={feed_date} ===")
 
     with pg_connection() as conn:
         # ── Step 1: fetch raw rows ──────────────────────────────────────────────
@@ -379,7 +402,7 @@ def process_mssb_positions(feed_date) -> int:
 
         with conn.cursor() as cur:
             # ── Step 2: batch-load account cache ───────────────────────────────
-            account_cache = _load_account_cache(cur, raw_rows)
+            account_cache = _load_account_cache(cur, raw_rows, account_id)
             logger.info(f"Loaded {len(account_cache)} broker_account entries into cache")
 
             # ── Step 3: batch-load security cache ──────────────────────────────
@@ -467,6 +490,7 @@ def process_mssb_positions(feed_date) -> int:
                     'asset_class':     asset_class,
                     'currency':        currency,
                     'broker_account':  account,
+                    'broker':          'Morgan Stanley',
                     'last_price':      last_price,
                     'last_price_date': last_price_date,
                     # ── HARDCODED: feed_source identifies this pipeline ──────
@@ -486,12 +510,12 @@ def process_mssb_positions(feed_date) -> int:
                     INSERT INTO proc_positions
                         (as_of_date, account_id, position_id, security_id, security_name,
                          isin, cusip, ticker, quantity, market_value, asset_class, currency,
-                         broker_account, last_price, last_price_date, feed_source)
+                         broker_account, broker, last_price, last_price_date, feed_source)
                     VALUES
                         (%(as_of_date)s, %(account_id)s, %(position_id)s, %(security_id)s,
                          %(security_name)s, %(isin)s, %(cusip)s, %(ticker)s, %(quantity)s,
                          %(market_value)s, %(asset_class)s, %(currency)s, %(broker_account)s,
-                         %(last_price)s, %(last_price_date)s, %(feed_source)s)
+                         %(broker)s, %(last_price)s, %(last_price_date)s, %(feed_source)s)
                 """
                 cur.executemany(insert_sql, processed)
 
@@ -503,17 +527,6 @@ def process_mssb_positions(feed_date) -> int:
     return n
 
 
-def _get_proc_asof_date() -> str:
-    """Return as_of_date from proc_asof_date table as 'YYYY-MM-DD'. Raises if missing."""
-    with pg_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute('SELECT as_of_date FROM proc_asof_date LIMIT 1')
-            row = cur.fetchone()
-            if not row or row[0] is None:
-                raise RuntimeError('proc_asof_date table is empty — cannot determine as_of_date')
-            return row[0].isoformat() if hasattr(row[0], 'isoformat') else str(row[0])
-
-
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser(description='Process MSSB positions into proc_positions')
@@ -522,7 +535,11 @@ if __name__ == '__main__':
                        help='Process a specific feed_date (default: read from proc_asof_date table)')
     group.add_argument('--all', action='store_true',
                        help='Process all feed_dates found in mssb_posit')
+    parser.add_argument('--account-id', metavar='ACCOUNT_ID', type=int,
+                        help='Limit processing to broker accounts belonging to this account_id')
     args = parser.parse_args()
+
+    _account_id = args.account_id  # None means process all accounts
 
     if args.all:
         with pg_connection() as _conn:
@@ -534,7 +551,7 @@ if __name__ == '__main__':
             sys.exit(0)
         print(f'Processing {len(_feed_dates)} feed_date(s): {_feed_dates[0]} → {_feed_dates[-1]}')
         for _feed_date in _feed_dates:
-            process_mssb_positions(_feed_date)
+            process_mssb_positions(_feed_date, _account_id)
     else:
-        _feed_date = args.date or _get_proc_asof_date()
-        process_mssb_positions(_feed_date)
+        _feed_date = args.date or get_proc_asof_date()
+        process_mssb_positions(_feed_date, _account_id)
