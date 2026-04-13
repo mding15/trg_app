@@ -42,7 +42,7 @@ def get_positions_on_date(conn, as_of_date, account_id: int) -> pd.DataFrame:
         cur.execute(
             """
             SELECT security_id, ticker, security_name, market_value, currency,
-                   asset_class, marginal_tvar
+                   asset_class, marginal_tvar, marginal_var, marginal_std, expected_return, beta
             FROM position_var
             WHERE as_of_date = %s AND account_id = %s
             """,
@@ -129,13 +129,11 @@ def pct_return_total(current: float, base: float | None) -> float | None:
 
 # ── Main computation functions ────────────────────────────────────────────────
 
-def compute_portfolio_summary(account_id: int, as_of_date=None) -> dict:
+def compute_portfolio_summary(account_id: int, as_of_date, df: pd.DataFrame) -> dict:
     """
     Compute portfolio-level summary for account_id.
-    Current AUM and risk metrics come from position_var;
+    Current AUM and risk metrics are derived from df (pre-fetched from position_var);
     return metrics are calculated from db_mv_history.
-
-    as_of_date: if provided, use that date; otherwise use the latest date in position_var.
 
     Risk metric formulas:
         var_1d_95  = SUM(marginal_var)
@@ -151,63 +149,41 @@ def compute_portfolio_summary(account_id: int, as_of_date=None) -> dict:
         unrealized_gain = aum * 10%  [placeholder]
         top_five_conc = top-5 security MV / aum * 100  [%]
     """
+    import datetime
+    latest = pd.to_datetime(as_of_date).date() if not isinstance(as_of_date, datetime.date) else as_of_date
+    first_of_month = latest.replace(day=1)
+    first_of_year  = latest.replace(month=1, day=1)
+    one_year_ago   = latest.replace(year=latest.year - 1)
+
+    mv = pd.to_numeric(df['market_value'], errors='coerce').fillna(0.0)
+    count = df['security_id'].nunique()
+    aum   = float(mv.sum())
+
+    def _sum_col(col):
+        s = pd.to_numeric(df[col], errors='coerce').sum()
+        return float(s) if not pd.isna(s) else None
+
+    sum_mvar  = _sum_col('marginal_var')
+    sum_mtvar = _sum_col('marginal_tvar')
+    sum_mstd  = _sum_col('marginal_std')
+    er            = pd.to_numeric(df['expected_return'], errors='coerce')
+    sum_mv_er_val = (mv * er).sum()
+    sum_mv_er     = float(sum_mv_er_val) if not pd.isna(sum_mv_er_val) else None
+
+    top5_mvs = (
+        df.groupby('security_id')['market_value']
+        .apply(lambda x: pd.to_numeric(x, errors='coerce').fillna(0.0).sum())
+        .nlargest(5)
+        .tolist()
+    )
+
+    # MV-weighted beta: null beta defaults to 0 (Cash), 0.5 (Fixed Income), 1 (all others)
+    default_beta = df['asset_class'].map({'Cash': 0.0, 'Fixed Income': 0.5}).fillna(1.0)
+    beta_series  = pd.to_numeric(df['beta'], errors='coerce').fillna(default_beta)
+    total_mv_signed = mv.sum()  # mv is signed (already computed above)
+    mv_weighted_beta = round(float((mv * beta_series).sum() / total_mv_signed), 4) if total_mv_signed != 0 else None
+
     with pg_connection() as conn:
-        if as_of_date is not None:
-            import datetime
-            latest = pd.to_datetime(as_of_date).date() if not isinstance(as_of_date, datetime.date) else as_of_date
-        else:
-            dates = get_latest_feed_dates(conn, n=1)
-            if not dates:
-                return {}
-            latest = dates[0]
-        first_of_month = latest.replace(day=1)
-        first_of_year  = latest.replace(month=1, day=1)
-        one_year_ago   = latest.replace(year=latest.year - 1)
-
-        # AUM and position count
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT COUNT(DISTINCT security_id), SUM(market_value)
-                FROM position_var
-                WHERE as_of_date = %s AND account_id = %s
-                """,
-                (latest, account_id),
-            )
-            count, aum_raw = cur.fetchone()
-        aum = float(aum_raw) if aum_raw is not None else 0.0
-
-        # Risk aggregates from position_var
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT SUM(marginal_var),
-                       SUM(marginal_tvar),
-                       SUM(marginal_std),
-                       SUM(market_value * expected_return)
-                FROM position_var
-                WHERE as_of_date = %s AND account_id = %s
-                """,
-                (latest, account_id),
-            )
-            risk_row = cur.fetchone()
-        sum_mvar, sum_mtvar, sum_mstd, sum_mv_er = risk_row if risk_row else (None, None, None, None)
-
-        # Top-5 concentration (group by security_id, take highest 5 MVs)
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT SUM(market_value) AS mv
-                FROM position_var
-                WHERE as_of_date = %s AND account_id = %s
-                GROUP BY security_id
-                ORDER BY mv DESC
-                LIMIT 5
-                """,
-                (latest, account_id),
-            )
-            top5_mvs = [float(r[0]) for r in cur.fetchall() if r[0] is not None]
-
         # Historical reference AUMs for return calculations
         prev = prev_date_from_history(conn, account_id, latest)
 
@@ -264,36 +240,25 @@ def compute_portfolio_summary(account_id: int, as_of_date=None) -> dict:
         "es99":           es_99,
         "volatility":     volatility,
         "sharpe":         sharpe,
-        "beta":           1.2,
+        "beta":           mv_weighted_beta,
         "maxDrawdown":    -12.5,
         "topFiveConc":    top_five_conc,
     }
 
 
-def compute_positions(account_id: int, as_of_date=None) -> list[dict]:
+def compute_positions(account_id: int, as_of_date, df: pd.DataFrame) -> list[dict]:
     """
     Compute position-level data for account_id, aggregated by security_id.
-    Current positions come from position_var; returns are calculated from db_mv_history.
-
-    as_of_date: if provided, use that date; otherwise use the latest date in position_var.
+    Current positions are derived from df (pre-fetched from position_var);
+    returns are calculated from db_mv_history.
     """
+    import datetime
+    latest = pd.to_datetime(as_of_date).date() if not isinstance(as_of_date, datetime.date) else as_of_date
+    first_of_month = latest.replace(day=1)
+    first_of_year  = latest.replace(month=1, day=1)
+    one_year_ago   = latest.replace(year=latest.year - 1)
+
     with pg_connection() as conn:
-        if as_of_date is not None:
-            import datetime
-            latest = pd.to_datetime(as_of_date).date() if not isinstance(as_of_date, datetime.date) else as_of_date
-        else:
-            dates = get_latest_feed_dates(conn, n=1)
-            if not dates:
-                return []
-            latest = dates[0]
-        first_of_month = latest.replace(day=1)
-        first_of_year  = latest.replace(month=1, day=1)
-        one_year_ago   = latest.replace(year=latest.year - 1)
-
-        df = get_positions_on_date(conn, latest, account_id)
-        if df.empty:
-            return []
-
         prev = prev_date_from_history(conn, account_id, latest)
 
         prev_mv   = mv_map_from_history(conn, account_id, prev)           if prev else {}

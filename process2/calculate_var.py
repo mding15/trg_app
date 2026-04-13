@@ -223,6 +223,69 @@ def _merge_positions_for_parent(
     return merged.reset_index(drop=True)
 
 
+# ── Beta helpers ───────────────────────────────────────────────────────────────
+
+def load_account_beta_keys(account_ids: list[int]) -> dict[int, str]:
+    """
+    Return {account_id: beta_key} for all given account_ids in a single query,
+    using the most-recently updated row per account.
+    """
+    if not account_ids:
+        return {}
+    query = """
+        SELECT DISTINCT ON (account_id) account_id, beta_key
+        FROM account_parameters
+        WHERE account_id = ANY(%s) AND beta_key IS NOT NULL
+        ORDER BY account_id, updated_at DESC
+    """
+    with pg_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(query, (list(account_ids),))
+            rows = cur.fetchall()
+    return {row[0]: row[1] for row in rows}
+
+
+def fetch_betas_bulk(
+    beta_keys: list[str],
+    security_ids: list[str],
+) -> dict[str, dict[str, float]]:
+    """
+    Return {beta_key: {security_id: beta}} for the given beta_keys,
+    filtered to only the securities present in security_ids.
+    A single query replaces repeated per-account fetches.
+    """
+    if not beta_keys or not security_ids:
+        return {}
+    query = """
+        SELECT beta_key, security_id, beta
+        FROM sec_beta
+        WHERE beta_key = ANY(%s) AND security_id = ANY(%s)
+    """
+    with pg_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(query, (list(beta_keys), list(security_ids)))
+            rows = cur.fetchall()
+    result: dict[str, dict[str, float]] = {}
+    for bk, sid, beta in rows:
+        result.setdefault(bk, {})[sid] = beta
+    return result
+
+
+def add_beta_to_result(
+    result: pd.DataFrame,
+    betas: dict,
+    logger: logging.Logger,
+) -> pd.DataFrame:
+    """
+    Map betas onto result by SecurityID. Missing securities get NULL.
+    Applies to all rows (active and excluded).
+    """
+    result['beta'] = result['SecurityID'].map(betas) if betas else None
+    matched = result['beta'].notna().sum()
+    logger.info(f"Beta: {matched}/{len(result)} positions matched (beta_key has {len(betas)} securities)")
+    return result
+
+
 # ── VaR runner helper ─────────────────────────────────────────────────────────
 
 def _run_var(
@@ -231,11 +294,13 @@ def _run_var(
     excluded: pd.DataFrame,
     params: dict,
     as_of_date,
+    betas: dict,
     logger: logging.Logger,
 ) -> int:
     """
     Run VaR engine on active positions, re-attach excluded rows with NULL VaR columns,
-    insert into position_var, and return the number of rows inserted.
+    add beta for all rows, insert into position_var, and return the number of rows inserted.
+    betas — pre-fetched {security_id: beta} for this account (may be empty).
     Raises on engine or DB failure — caller decides whether to skip or abort.
     """
     with app.app_context():
@@ -249,6 +314,9 @@ def _run_var(
         for col in new_cols:
             excluded_out[col] = None
         result = pd.concat([result, excluded_out], ignore_index=True)
+
+    # add beta to all rows (active + excluded)
+    result = add_beta_to_result(result, betas, logger)
 
     n = insert_results(result, as_of_date)
     logger.info(f"{label}: {len(active)} positions calculated, {len(excluded)} excluded, {n} rows inserted")
@@ -298,10 +366,17 @@ def calculate_var(feed_source: str | None = None, as_of_date=None, account_id: i
                 )
                 return
 
+            # Pre-fetch beta for this parent account
+            sec_ids          = all_positions['SecurityID'].dropna().unique().tolist()
+            acct_beta_keys   = load_account_beta_keys([account_id])
+            unique_beta_keys = list(set(acct_beta_keys.values()))
+            betas_bulk       = fetch_betas_bulk(unique_beta_keys, sec_ids)
+            betas            = betas_bulk.get(acct_beta_keys.get(account_id), {})
+
             excluded = merged[merged['excluded'] == True]
             active   = merged[merged['excluded'] != True]
             try:
-                n = _run_var(f"parent_account_id={account_id}", active, excluded, params, as_of_date, logger)
+                n = _run_var(f"parent_account_id={account_id}", active, excluded, params, as_of_date, betas, logger)
             except Exception as e:
                 logger.error(f"parent_account_id={account_id}: FAILED — {e}")
                 raise
@@ -318,11 +393,18 @@ def calculate_var(feed_source: str | None = None, as_of_date=None, account_id: i
                 logger.error(f"preprocess_var failed: {e}")
                 raise
 
+            # Pre-fetch beta for this leaf account
+            sec_ids          = all_positions['SecurityID'].dropna().unique().tolist()
+            acct_beta_keys   = load_account_beta_keys([account_id])
+            unique_beta_keys = list(set(acct_beta_keys.values()))
+            betas_bulk       = fetch_betas_bulk(unique_beta_keys, sec_ids)
+            betas            = betas_bulk.get(acct_beta_keys.get(account_id), {})
+
             acc_pos  = all_positions[all_positions['account_id'] == account_id]
             excluded = acc_pos[acc_pos['excluded'] == True]
             active   = acc_pos[acc_pos['excluded'] != True]
             try:
-                n = _run_var(f"account_id={account_id}", active, excluded, params, as_of_date, logger)
+                n = _run_var(f"account_id={account_id}", active, excluded, params, as_of_date, betas, logger)
             except Exception as e:
                 logger.error(f"account_id={account_id}: FAILED — {e}")
                 raise
@@ -341,14 +423,39 @@ def calculate_var(feed_source: str | None = None, as_of_date=None, account_id: i
         raise
 
     leaf_account_ids = all_positions['account_id'].unique()
-    total_inserted   = 0
+
+    # Load parent map early so we can include parent account IDs in the beta pre-fetch
+    parent_map  = _load_parent_map()
+    all_parents = sorted(parent_map.keys()) if parent_map else []
+
+    # Pre-fetch all betas in one pass: one DB call for account→beta_key, one for betas
+    all_acct_ids     = [int(x) for x in leaf_account_ids] + all_parents
+    sec_ids          = all_positions['SecurityID'].dropna().unique().tolist()
+    acct_beta_keys   = load_account_beta_keys(all_acct_ids)           # {account_id: beta_key}
+    unique_beta_keys = list(set(acct_beta_keys.values()))
+    betas_bulk       = fetch_betas_bulk(unique_beta_keys, sec_ids)     # {beta_key: {sec_id: beta}}
+    logger.info(
+        f"Beta pre-fetch: {len(acct_beta_keys)} accounts with beta_key, "
+        f"{len(unique_beta_keys)} unique key(s), "
+        f"{sum(len(v) for v in betas_bulk.values())} security-beta mappings loaded"
+    )
+
+    def _account_betas(acct_id: int) -> dict:
+        """Return the pre-fetched {security_id: beta} dict for acct_id."""
+        bk = acct_beta_keys.get(acct_id)
+        return betas_bulk.get(bk, {}) if bk else {}
+
+    total_inserted = 0
 
     for acct_id in leaf_account_ids:
         acc_pos  = all_positions[all_positions['account_id'] == acct_id]
         excluded = acc_pos[acc_pos['excluded'] == True]
         active   = acc_pos[acc_pos['excluded'] != True]
         try:
-            total_inserted += _run_var(f"account_id={acct_id}", active, excluded, params, as_of_date, logger)
+            total_inserted += _run_var(
+                f"account_id={acct_id}", active, excluded, params, as_of_date,
+                _account_betas(acct_id), logger,
+            )
         except Exception as e:
             logger.error(f"account_id={acct_id}: FAILED — {e}")
             continue
@@ -356,11 +463,9 @@ def calculate_var(feed_source: str | None = None, as_of_date=None, account_id: i
     logger.info(f"Leaf accounts: {total_inserted} rows inserted across {len(leaf_account_ids)} account(s)")
 
     # ── Parent account VaR ────────────────────────────────────────────────────
-    parent_map = _load_parent_map()
     if not parent_map:
         logger.info("No parent accounts configured — skipping consolidation.")
     else:
-        all_parents = sorted(parent_map.keys())
         logger.info(f"Processing {len(all_parents)} parent account(s): {all_parents}")
 
         for parent_id in all_parents:
@@ -378,7 +483,10 @@ def calculate_var(feed_source: str | None = None, as_of_date=None, account_id: i
             excluded = merged[merged['excluded'] == True]
             active   = merged[merged['excluded'] != True]
             try:
-                total_inserted += _run_var(f"parent_account_id={parent_id}", active, excluded, params, as_of_date, logger)
+                total_inserted += _run_var(
+                    f"parent_account_id={parent_id}", active, excluded, params, as_of_date,
+                    _account_betas(parent_id), logger,
+                )
             except Exception as e:
                 logger.error(f"parent_account_id={parent_id}: FAILED — {e}")
                 continue

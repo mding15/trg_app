@@ -398,6 +398,33 @@ def create_tables() -> None:
                 )
             """)
 
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS beta_definition (
+                    beta_key       VARCHAR(50)  PRIMARY KEY,
+                    benchmark_id   VARCHAR(20)  NOT NULL,
+                    benchmark_name VARCHAR(100) NOT NULL,
+                    lookback_days  INT          NOT NULL DEFAULT 252,
+                    return_type    VARCHAR(10)  NOT NULL DEFAULT 'SIMPLE',
+                    min_obs        INT          NOT NULL DEFAULT 100,
+                    description    TEXT
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS sec_beta (
+                    security_id  VARCHAR(20) NOT NULL,
+                    beta_key     VARCHAR(50) NOT NULL REFERENCES beta_definition(beta_key),
+                    benchmark_id VARCHAR(20) NOT NULL,
+                    beta         FLOAT,
+                    r_squared    FLOAT,
+                    vol          FLOAT,
+                    obs_count    INT,
+                    start_date   DATE,
+                    end_date     DATE,
+                    calc_date    DATE,
+                    PRIMARY KEY (security_id, beta_key)
+                )
+            """)
+
         conn.commit()
 
 
@@ -446,6 +473,10 @@ def migrate_tables() -> None:
                 CREATE UNIQUE INDEX IF NOT EXISTS uq_account_access_default
                     ON account_access (user_id)
                     WHERE is_default = TRUE;
+            """)
+            # beta on individual positions
+            cur.execute("""
+                ALTER TABLE position_var ADD COLUMN IF NOT EXISTS beta FLOAT;
             """)
         conn.commit()
 

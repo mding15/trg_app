@@ -156,6 +156,7 @@ def insert_results(results: pd.DataFrame, as_of_date) -> int:
         'ir_pv01', 'sp_pv01', 'spread_duration', 'spread_convexity',
         'delta_var', 'ir_var', 'spread_var', 'gamma_var',
         'std', 'marginal_std', 'var', 'tvar', 'marginal_var', 'marginal_tvar',
+        'beta',
     }
 
     _DATE_COLS = {'last_price_date', 'maturity_date'}
@@ -175,6 +176,7 @@ def insert_results(results: pd.DataFrame, as_of_date) -> int:
         'ir_pv01', 'sp_pv01', 'spread_duration', 'spread_convexity',
         'delta_var', 'ir_var', 'spread_var', 'gamma_var',
         'std', 'marginal_std', 'var', 'tvar', 'marginal_var', 'marginal_tvar',
+        'beta',
     ]
 
     df = results.copy()

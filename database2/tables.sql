@@ -22,3 +22,14 @@ CREATE TABLE public.account_sec_attribute (
 	ticker varchar(200) NULL,
 	CONSTRAINT acct_sec_attribute_pkey PRIMARY KEY (account_id, security_id)
 );
+
+CREATE TABLE public.account_parameters (
+	id serial4 NOT NULL,
+	account_id int4 NOT NULL,
+	risk_horizon varchar(20) null,
+	risk_measure varchar(20) null,
+	base_currency varchar(20) null,
+	beta_key varchar(20) null,
+	updated_at timestamp DEFAULT now() NOT null
+);
+

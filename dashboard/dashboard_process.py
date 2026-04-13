@@ -131,13 +131,13 @@ def run(as_of_date=None, account_id=None) -> None:
 
         # b. Compute and write portfolio summary
         delete_portfolio_summary(account_id, as_of_date)
-        summary = compute_portfolio_summary(account_id, as_of_date=as_of_date)
+        summary = compute_portfolio_summary(account_id, as_of_date=as_of_date, df=df)
         write_portfolio_summary(account_id, summary)
         logger.info(f"Portfolio summary written  aum={summary.get('aum')}  asOfDate={summary.get('asOfDate')}")
 
         # c. Compute and write positions
         delete_positions(account_id, as_of_date)
-        positions = compute_positions(account_id, as_of_date=as_of_date)
+        positions = compute_positions(account_id, as_of_date=as_of_date, df=df)
         write_positions(account_id, as_of_date, positions)
         logger.info(f"Wrote {len(positions)} positions to db_positions.")
 
