@@ -42,7 +42,7 @@ def get_positions_on_date(conn, as_of_date, account_id: int) -> pd.DataFrame:
         cur.execute(
             """
             SELECT security_id, ticker, security_name, market_value, currency,
-                   asset_class, marginal_tvar, marginal_var, marginal_std, expected_return, beta
+                   "class" AS asset_class, marginal_tvar, marginal_var, marginal_std, expected_return, beta
             FROM position_var
             WHERE as_of_date = %s AND account_id = %s
             """,
@@ -100,6 +100,22 @@ def prev_date_from_history(conn, account_id: int, before_date) -> object | None:
         )
         result = cur.fetchone()[0]
     return result
+
+
+def earliest_total_mv_from_history(conn, account_id: int) -> float | None:
+    """Return the total market value at the earliest available date in db_mv_history (since inception)."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT SUM(market_value) FROM db_mv_history
+            WHERE account_id = %s AND as_of_date = (
+                SELECT MIN(as_of_date) FROM db_mv_history WHERE account_id = %s
+            )
+            """,
+            (account_id, account_id),
+        )
+        result = cur.fetchone()[0]
+    return float(result) if result is not None else None
 
 
 # ── Return math ───────────────────────────────────────────────────────────────
@@ -187,10 +203,12 @@ def compute_portfolio_summary(account_id: int, as_of_date, df: pd.DataFrame) -> 
         # Historical reference AUMs for return calculations
         prev = prev_date_from_history(conn, account_id, latest)
 
-        prev_aum   = total_mv_from_history(conn, account_id, prev)           if prev else None
-        mtd_aum    = total_mv_from_history(conn, account_id, first_of_month)
-        ytd_aum    = total_mv_from_history(conn, account_id, first_of_year)
-        one_yr_aum = total_mv_from_history(conn, account_id, one_year_ago)
+        prev_aum      = total_mv_from_history(conn, account_id, prev)            if prev else None
+        mtd_aum       = total_mv_from_history(conn, account_id, first_of_month)
+        ytd_aum       = total_mv_from_history(conn, account_id, first_of_year)
+        one_yr_aum    = total_mv_from_history(conn, account_id, one_year_ago)
+        three_yr_aum  = total_mv_from_history(conn, account_id, three_years_ago)
+        si_aum        = earliest_total_mv_from_history(conn, account_id)
 
     day_pnl = round(aum - prev_aum, 2) if prev_aum is not None else None
 
@@ -228,10 +246,12 @@ def compute_portfolio_summary(account_id: int, as_of_date, df: pd.DataFrame) -> 
         "aum":            round(aum, 2),
         "numPositions":   int(count) if count else 0,
         "dayPnL":         day_pnl,
-        "dayReturn":      pct_return_total(aum, prev_aum),
-        "mtdReturn":      pct_return_total(aum, mtd_aum),
-        "ytdReturn":      pct_return_total(aum, ytd_aum),
-        "oneYearReturn":  pct_return_total(aum, one_yr_aum),
+        "dayReturn":        pct_return_total(aum, prev_aum),
+        "mtdReturn":        pct_return_total(aum, mtd_aum),
+        "ytdReturn":        pct_return_total(aum, ytd_aum),
+        "oneYearReturn":    pct_return_total(aum, one_yr_aum),
+        "threeYearReturn":  pct_return_total(aum, three_yr_aum),
+        "siReturn":         pct_return_total(aum, si_aum),
         "unrealizedGain": unrealized_gain,
         "var1d95":        var_1d_95,
         "var1d99":        var_1d_99,

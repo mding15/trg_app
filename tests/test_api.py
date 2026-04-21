@@ -4,6 +4,7 @@ Created on Mon Mar 18 14:47:56 2024
 
 @author: mgdin
 """
+import argparse
 import os
 import sys
 
@@ -12,6 +13,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 import xlwings as xw
 import requests
 import json
+import jwt
 from pathlib import Path
 
 from trg_config import config
@@ -35,8 +37,22 @@ admin_password = 'test123'
 
 # host = 'https://engine.tailriskglobal.com'
 host = 'http://localhost:5050'
-# host = 'http://54.82.69.244' # dev2
+# host = 'https://dev2.tailriskglobal.com'
 client.set_host(host)
+
+_CONFIG_DIR = Path(__file__).resolve().parent.parent.parent / 'config'
+
+def _load_token() -> str:
+    """Generate a JWT token using SECRET_KEY from app_config.json and
+    SYS_USERNAME from config.json."""
+    with open(_CONFIG_DIR / 'app_config.json') as f:
+        app_cfg = json.load(f)
+    with open(_CONFIG_DIR / 'config.json') as f:
+        cfg = json.load(f)
+    secret   = app_cfg['SECRET_KEY']
+    username = cfg['TEST_USERNAME']
+    print(f'Generating token for username: {username}')
+    return jwt.encode({'username': username}, secret, algorithm='HS256')
 
 
 def request_get(url, name):
@@ -628,28 +644,157 @@ def get_mkt_data_payload(tickers=['SPY', 'AAPL']):
 
     return input_data
 
+SUMMARY_ACCOUNT_ID = 1003
+
+
 def test_summary_metrics():
-    account_id = 1003
-
-    token = test_login(username, password)
-    params = {'token': token, 'account_id': account_id}
-
-    url = f'{host}/api/risk/summary'
+    token  = _load_token()
+    params = {'token': token, 'account_id': SUMMARY_ACCOUNT_ID}
+    url    = f'{host}/api/summary/metrics'
     print(url)
-
     try:
         response = requests.get(url, params=params)
-
         if response.status_code == 200:
-            data = response.json()
-            print(json.dumps(data, indent=2))
+            print(json.dumps(response.json(), indent=2))
         else:
             print(f"Failed: {response.status_code}")
             print("Response:", response.text)
-
     except requests.exceptions.RequestException as e:
         print(f"An error occurred: {e}")
 
+
+def test_summary_brokers():
+    token  = _load_token()
+    params = {'token': token, 'account_id': SUMMARY_ACCOUNT_ID}
+    url    = f'{host}/api/summary/brokers'
+    print(url)
+    try:
+        response = requests.get(url, params=params)
+        if response.status_code == 200:
+            print(json.dumps(response.json(), indent=2))
+        else:
+            print(f"Failed: {response.status_code}")
+            print("Response:", response.text)
+    except requests.exceptions.RequestException as e:
+        print(f"An error occurred: {e}")
+
+
+def test_summary_concentrations():
+    token  = _load_token()
+    params = {'token': token, 'account_id': SUMMARY_ACCOUNT_ID}
+    url    = f'{host}/api/summary/concentrations'
+    print(url)
+    try:
+        response = requests.get(url, params=params)
+        if response.status_code == 200:
+            print(json.dumps(response.json(), indent=2))
+        else:
+            print(f"Failed: {response.status_code}")
+            print("Response:", response.text)
+    except requests.exceptions.RequestException as e:
+        print(f"An error occurred: {e}")
+
+
+def test_summary_gauges():
+    token  = _load_token()
+    params = {'token': token, 'account_id': SUMMARY_ACCOUNT_ID}
+    url    = f'{host}/api/summary/gauges'
+    print(url)
+    try:
+        response = requests.get(url, params=params)
+        if response.status_code == 200:
+            print(json.dumps(response.json(), indent=2))
+        else:
+            print(f"Failed: {response.status_code}")
+            print("Response:", response.text)
+    except requests.exceptions.RequestException as e:
+        print(f"An error occurred: {e}")
+
+
+def test_summary_chart(range_key='1M'):
+    token    = _load_token()
+    # range_key = '1M'
+    params   = {'token': token, 'account_id': SUMMARY_ACCOUNT_ID}
+    url      = f'{host}/api/summary/chart/{range_key}'
+    print(url)
+    try:
+        response = requests.get(url, params=params)
+        if response.status_code == 200:
+            print(json.dumps(response.json(), indent=2))
+        else:
+            print(f"Failed: {response.status_code}")
+            print("Response:", response.text)
+    except requests.exceptions.RequestException as e:
+        print(f"An error occurred: {e}")
+
+
+
+######## PORTFOLIO API ###################
+
+def test_portfolio_positions():
+    token  = _load_token()
+    params = {'token': token, 'account_id': SUMMARY_ACCOUNT_ID}
+    url    = f'{host}/api/portfolio/positions'
+    print(url)
+    try:
+        response = requests.get(url, params=params)
+        if response.status_code == 200:
+            print(json.dumps(response.json(), indent=2))
+        else:
+            print(f"Failed: {response.status_code}")
+            print("Response:", response.text)
+    except requests.exceptions.RequestException as e:
+        print(f"An error occurred: {e}")
+
+
+
+# /api/portfolio/summary
+def test_portfolio_summary():
+    token  = _load_token()
+    params = {'token': token, 'account_id': SUMMARY_ACCOUNT_ID}
+    url    = f'{host}/api/portfolio/summary'
+    print(url)
+    try:
+        response = requests.get(url, params=params)
+        if response.status_code == 200:
+            print(json.dumps(response.json(), indent=2))
+        else:
+            print(f"Failed: {response.status_code}")
+            print("Response:", response.text)
+    except requests.exceptions.RequestException as e:
+        print(f"An error occurred: {e}")
+
+def test_portfolio_alloc():
+    token  = _load_token()
+    params = {'token': token, 'account_id': SUMMARY_ACCOUNT_ID, 'slice': 'broker'}
+    url    = f'{host}/api/portfolio/allocation'
+    print(url)
+    try:
+        response = requests.get(url, params=params)
+        if response.status_code == 200:
+            print(json.dumps(response.json(), indent=2))
+        else:
+            print(f"Failed: {response.status_code}")
+            print("Response:", response.text)
+    except requests.exceptions.RequestException as e:
+        print(f"An error occurred: {e}")
+
+# /api/portfolio/chart/{range_key}
+def test_portfolio_chart(range_key='1M'):
+    token    = _load_token()
+    # range_key = '1M'
+    params   = {'token': token, 'account_id': SUMMARY_ACCOUNT_ID}
+    url      = f'{host}/api/portfolio/chart/{range_key}'
+    print(url)
+    try:
+        response = requests.get(url, params=params)
+        if response.status_code == 200:
+            print(json.dumps(response.json(), indent=2))
+        else:
+            print(f"Failed: {response.status_code}")
+            print("Response:", response.text)
+    except requests.exceptions.RequestException as e:
+        print(f"An error occurred: {e}")
 
 #############################################################################
 # TEST
@@ -677,4 +822,20 @@ def test():
         print('Error:', msg)
 
 if __name__ == '__main__':
-    test_summary_metrics()
+    parser = argparse.ArgumentParser(description="TRG API test runner")
+    parser.add_argument('--range-key', dest='range_key', default='1M',
+                        help="Chart range key passed to test_summary_chart (default: 1M)")
+    args = parser.parse_args()
+
+    # Summary APIs
+    #test_summary_metrics()
+    # test_summary_brokers()
+    # test_summary_concentrations()
+    # test_summary_gauges()
+    # test_summary_chart(range_key=args.range_key)
+
+    # Portfolio APIs
+    # test_portfolio_positions()
+    # test_portfolio_summary()
+    # test_portfolio_alloc()
+    test_portfolio_chart(range_key=args.range_key)

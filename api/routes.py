@@ -665,9 +665,17 @@ from dashboard.positions_db import (
 )
 from dashboard.stress_test import read_stress_results
 from dashboard.static_data import (
-    RISK, RISK_CONTRIBUTIONS, FACTOR_EXPOSURES_V2, ASSET_ALLOCATION_DRILLDOWN,
+    RISK, FACTOR_EXPOSURES_V2, ASSET_ALLOCATION_DRILLDOWN,
     RISK_METRICS, RISK_ADJUSTED_RETURN, TOP_RISKS, VAR_HISTORY,
+    RISK_PARAMETERS, RISK_SUMMARY_MOCK, RISK_CONCENTRATIONS,
+    RISK_CONTRIB_MOCK,
+    RISK_ASSET_LEVELS, RISK_REGION_LEVELS, RISK_INDUSTRY_LEVELS, RISK_CURRENCY_LEVELS,
+    STRESS_SCENARIOS_V2,
+    PORTFOLIO_SUMMARY, PORTFOLIO_POSITIONS, PORTFOLIO_CHART, PORTFOLIO_ALLOC,
 )
+from dashboard.allocation_drilldown import get_alloc_drilldown_data
+from dashboard.portfolio_chart import get_portfolio_chart_data
+from dashboard.portfolio_allocation import get_portfolio_allocation as _fetch_portfolio_allocation
 from dashboard.bar_chart_data import (
     read_asset_drilldown,
     read_industry_drilldown,
@@ -754,17 +762,75 @@ def get_allocation(username):
     account_id, err = _get_account_id(username=username)
     if err:
         return err
+    return jsonify(get_alloc_drilldown_data(account_id))
+
+
+@app.route("/api/summary/brokers")
+@token_required
+def get_summary_brokers(username):
+    account_id, err = _get_account_id(username=username)
+    if err:
+        return err
+    # Returns mock data until db_broker_summary table is implemented
+    mock = [
+        {"brokerName": "Fidelity",            "marketValue": 45200000, "return1d":  0.42, "var1d": 4310000, "volatility": 5.2},
+        {"brokerName": "Charles Schwab",      "marketValue": 38700000, "return1d": -0.18, "var1d": 3890000, "volatility": 6.1},
+        {"brokerName": "Interactive Brokers", "marketValue": 51300000, "return1d":  0.87, "var1d": 5120000, "volatility": 4.8},
+        {"brokerName": "Goldman Sachs",       "marketValue": 28100000, "return1d":  0.11, "var1d": 2740000, "volatility": 5.5},
+        {"brokerName": "Morgan Stanley",      "marketValue": 14400000, "return1d": -0.05, "var1d": 1810000, "volatility": 7.2},
+    ]
+    return jsonify(mock)
+
+
+@app.route("/api/summary/concentrations")
+@token_required
+def get_summary_concentrations(username):
+    account_id, err = _get_account_id(username=username)
+    if err:
+        return err
+    # Returns mock data until db_concentrations table is implemented
+    mock = [
+        {"category": "Asset Class",  "ratio": 3.6},
+        {"category": "Region",       "ratio": 2.8},
+        {"category": "Currency",     "ratio": 2.2},
+        {"category": "Industry",     "ratio": 1.5},
+        {"category": "Single Name",  "ratio": 0.4},
+    ]
+    return jsonify(mock)
+
+
+@app.route("/api/summary/gauges")
+@token_required
+def get_summary_gauges(username):
+    account_id, err = _get_account_id(username=username)
+    if err:
+        return err
     try:
-        rows = read_asset_allocation(account_id)
-        # Allocation chart view: portfolio vs benchmark weights
-        data = [
-            {
-                "assetClass": r["assetClass"],
-                "weight":     r["weight"],
-                "bmkWeight":  r["bmkWeight"],
-            }
-            for r in rows
-        ]
+        ps = read_portfolio_summary(account_id)
+        sharpe   = ps.get("sharpe")
+        var1d95  = ps.get("var1d95")
+        aum      = ps.get("aum")
+        var_limit_pct = read_var_limit(account_id)
+        var_limit = (var_limit_pct / 100.0 * aum) if (var_limit_pct and aum) else 25000000
+        if var_limit < 1_000_000:
+            var_limit = round(var_limit / 100_000) * 100_000
+        elif var_limit < 10_000_000:
+            var_limit = round(var_limit / 1_000_000) * 1_000_000
+        else:
+            var_limit = round(var_limit / 100_000_000) * 100_000_000
+        var_band  = var_limit * 0.05
+        data = {
+            "sharpe": {
+                "value":  sharpe if sharpe is not None else 0.21,
+                "target": 0.15,
+                "band":   0.05,
+            },
+            "varLimit": {
+                "value": var1d95 if var1d95 is not None else 16900000,
+                "limit": var_limit,
+                "band":  var_band,
+            },
+        }
     except Exception as e:
         return jsonify({"error": str(e)}), 500
     return jsonify(data)
@@ -778,11 +844,7 @@ def get_risk_parameters(username):
     account_id, err = _get_account_id(username=username)
     if err:
         return err
-    try:
-        data = read_risk_parameters(account_id)
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-    return jsonify(data)
+    return jsonify(RISK_PARAMETERS)
 
 
 @app.route("/api/risk/summary")
@@ -791,40 +853,25 @@ def get_risk_summary(username):
     account_id, err = _get_account_id(username=username)
     if err:
         return err
-    try:
-        ps = read_portfolio_summary(account_id)
-        if not ps:
-            return jsonify({}), 200
-        data = {
-            "asOfDate":     ps.get("asOfDate"),
-            "var1d95":      ps.get("var1d95"),
-            "var1d95Pct":   ps.get("var1d95Pct"),
-            "var1d99":      ps.get("var1d99"),
-            "var1d99Pct":   ps.get("var1d99Pct"),
-            "var10d99":     ps.get("var10d99"),
-            "var10d99Pct":  ps.get("var10d99Pct"),
-            "es1d95":       ps.get("es1d95"),
-            "es1d95Pct":    ps.get("es1d95Pct"),
-            "es99":         ps.get("es99"),
-            "es99Pct":      ps.get("es99Pct"),
-            "volatility":   ps.get("volatility"),
-            "sharpe":       ps.get("sharpe"),
-            "beta":         ps.get("beta"),
-            "maxDrawdown":  ps.get("maxDrawdown"),
-            "topFiveConc":  ps.get("topFiveConc"),
-            "varLimitPct":  read_var_limit(account_id),
-            "activeAlerts": count_risk_alerts(account_id),
-        }
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-    return jsonify(data)
+    return jsonify(RISK_SUMMARY_MOCK)
 
 
 @app.route("/api/risk/contributions")
 @token_required
 def get_risk_contributions(username):
-    # Remains static until redesign
-    return jsonify(RISK_CONTRIBUTIONS)
+    account_id, err = _get_account_id(username=username)
+    if err:
+        return err
+    return jsonify(RISK_CONTRIB_MOCK)
+
+
+@app.route("/api/risk/concentrations")
+@token_required
+def get_risk_concentrations(username):
+    account_id, err = _get_account_id(username=username)
+    if err:
+        return err
+    return jsonify(RISK_CONCENTRATIONS)
 
 
 @app.route("/api/risk/asset_allocation")
@@ -836,37 +883,37 @@ def get_risk_asset_allocation(username):
 @app.route("/api/risk/asset")
 @token_required
 def get_risk_asset(username):
-    try:
-        return jsonify(read_asset_drilldown())
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    account_id, err = _get_account_id(username=username)
+    if err:
+        return err
+    return jsonify(RISK_ASSET_LEVELS)
 
 
 @app.route("/api/risk/industry")
 @token_required
 def get_risk_industry(username):
-    try:
-        return jsonify(read_industry_drilldown())
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    account_id, err = _get_account_id(username=username)
+    if err:
+        return err
+    return jsonify(RISK_INDUSTRY_LEVELS)
 
 
 @app.route("/api/risk/region")
 @token_required
 def get_risk_region(username):
-    try:
-        return jsonify(read_region_drilldown())
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    account_id, err = _get_account_id(username=username)
+    if err:
+        return err
+    return jsonify(RISK_REGION_LEVELS)
 
 
 @app.route("/api/risk/currency")
 @token_required
 def get_risk_currency(username):
-    try:
-        return jsonify(read_currency_drilldown())
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    account_id, err = _get_account_id(username=username)
+    if err:
+        return err
+    return jsonify(RISK_CURRENCY_LEVELS)
 
 
 @app.route("/api/risk/risk_metrics")
@@ -902,17 +949,13 @@ def get_risk_factors(username):
     return jsonify(FACTOR_EXPOSURES_V2)
 
 
-@app.route("/api/risk/stress")
+@app.route("/api/stress/scenarios")
 @token_required
-def get_risk_stress(username):
+def get_stress_scenarios(username):
     account_id, err = _get_account_id(username=username)
     if err:
         return err
-    try:
-        data = read_stress_results(account_id)
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-    return jsonify(data)
+    return jsonify(STRESS_SCENARIOS_V2)
 
 
 @app.route("/api/risk/alerts")
@@ -940,28 +983,67 @@ def get_accounts(username):
 @app.route("/api/portfolio/summary")
 @token_required
 def get_portfolio_summary(username):
+    account_id, err = _get_account_id(username=username)
+    if err:
+        return err
     try:
-        account_id = request.args.get("account_id", type=int)
-        if account_id is None:
-            return jsonify({"error": "account_id is required"}), 400
-        if not user_has_account_access(username, account_id):
-            return jsonify({"error": "Access denied"}), 403
-        summary = _fetch_portfolio_summary(account_id)
+        d = _fetch_portfolio_summary(account_id)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
-    return jsonify(summary)
+    if not d:
+        return jsonify({})
+    return jsonify({
+        "aum":            d.get("aum"),
+        "unrealizedGain": d.get("unrealizedGain"),
+        "asOfDate":       d.get("asOfDate"),
+        "returns": [
+            {"label": "SI",    "value": d.get("siReturn")},
+            {"label": "3Y",    "value": d.get("threeYearReturn")},
+            {"label": "12M",   "value": d.get("oneYearReturn")},
+            {"label": "YTD",   "value": d.get("ytdReturn")},
+            {"label": "Month", "value": d.get("mtdReturn")},
+            {"label": "Today", "value": d.get("dayReturn")},
+        ],
+    })
+
 
 @app.route("/api/portfolio/positions")
 @token_required
 def get_positions(username):
+    account_id, err = _get_account_id(username=username)
+    if err:
+        return err
     try:
-        account_id = request.args.get("account_id", type=int)
-        if account_id is None:
-            return jsonify({"error": "account_id is required"}), 400
-        if not user_has_account_access(username, account_id):
-            return jsonify({"error": "Access denied"}), 403
-        positions = _fetch_positions(account_id)
+        data = _fetch_positions(account_id)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
-    return jsonify(positions)
+    return jsonify(data)
+
+
+@app.route("/api/portfolio/chart/<range_key>")
+@token_required
+def get_portfolio_chart(username, range_key):
+    account_id, err = _get_account_id(username=username)
+    if err:
+        return err
+    data = get_portfolio_chart_data(account_id, range_key)
+    if data is None:
+        return jsonify({"error": f"No chart data for range: {range_key}"}), 404
+    return jsonify(data)
+
+
+@app.route("/api/portfolio/allocation")
+@token_required
+def get_portfolio_allocation(username):
+    account_id, err = _get_account_id(username=username)
+    if err:
+        return err
+    slice_key = request.args.get("slice", "asset")
+    try:
+        data = _fetch_portfolio_allocation(account_id, slice_key)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    if not data:
+        return jsonify({"error": f"No data for slice: {slice_key}"}), 404
+    return jsonify(data)
 

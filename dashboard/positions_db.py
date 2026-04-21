@@ -74,30 +74,34 @@ def write_portfolio_summary(account_id: int, summary: dict) -> None:
              day_return, mtd_return, ytd_return, one_year_return,
              unrealized_gain, var_1d_95, var_1d_99, var_10d_99,
              es_1d_95, es_99,
-             volatility, sharpe, beta, max_drawdown, top_five_conc, updated_at)
+             volatility, sharpe, beta, max_drawdown, top_five_conc,
+             three_year_return, si_return, updated_at)
         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s,
                 %s, %s, %s, %s, %s, %s,
-                %s, %s, %s, %s, %s, NOW())
+                %s, %s, %s, %s, %s,
+                %s, %s, NOW())
         ON CONFLICT (account_id, as_of_date) DO UPDATE SET
-            aum              = EXCLUDED.aum,
-            num_positions    = EXCLUDED.num_positions,
-            day_pnl          = EXCLUDED.day_pnl,
-            day_return       = EXCLUDED.day_return,
-            mtd_return       = EXCLUDED.mtd_return,
-            ytd_return       = EXCLUDED.ytd_return,
-            one_year_return  = EXCLUDED.one_year_return,
-            unrealized_gain  = EXCLUDED.unrealized_gain,
-            var_1d_95        = EXCLUDED.var_1d_95,
-            var_1d_99        = EXCLUDED.var_1d_99,
-            var_10d_99       = EXCLUDED.var_10d_99,
-            es_1d_95         = EXCLUDED.es_1d_95,
-            es_99            = EXCLUDED.es_99,
-            volatility       = EXCLUDED.volatility,
-            sharpe           = EXCLUDED.sharpe,
-            beta             = EXCLUDED.beta,
-            max_drawdown     = EXCLUDED.max_drawdown,
-            top_five_conc    = EXCLUDED.top_five_conc,
-            updated_at       = NOW()
+            aum               = EXCLUDED.aum,
+            num_positions     = EXCLUDED.num_positions,
+            day_pnl           = EXCLUDED.day_pnl,
+            day_return        = EXCLUDED.day_return,
+            mtd_return        = EXCLUDED.mtd_return,
+            ytd_return        = EXCLUDED.ytd_return,
+            one_year_return   = EXCLUDED.one_year_return,
+            unrealized_gain   = EXCLUDED.unrealized_gain,
+            var_1d_95         = EXCLUDED.var_1d_95,
+            var_1d_99         = EXCLUDED.var_1d_99,
+            var_10d_99        = EXCLUDED.var_10d_99,
+            es_1d_95          = EXCLUDED.es_1d_95,
+            es_99             = EXCLUDED.es_99,
+            volatility        = EXCLUDED.volatility,
+            sharpe            = EXCLUDED.sharpe,
+            beta              = EXCLUDED.beta,
+            max_drawdown      = EXCLUDED.max_drawdown,
+            top_five_conc     = EXCLUDED.top_five_conc,
+            three_year_return = EXCLUDED.three_year_return,
+            si_return         = EXCLUDED.si_return,
+            updated_at        = NOW()
     """
     with pg_connection() as conn:
         with conn.cursor() as cur:
@@ -122,6 +126,8 @@ def write_portfolio_summary(account_id: int, summary: dict) -> None:
                 summary.get("beta"),
                 summary.get("maxDrawdown"),
                 summary.get("topFiveConc"),
+                summary.get("threeYearReturn"),
+                summary.get("siReturn"),
             ))
         conn.commit()
 
@@ -271,7 +277,8 @@ def read_portfolio_summary(account_id: int) -> dict:
                mtd_return, ytd_return, one_year_return,
                unrealized_gain, var_1d_95, var_1d_99, var_10d_99,
                es_1d_95, es_99,
-               volatility, sharpe, beta, max_drawdown, top_five_conc
+               volatility, sharpe, beta, max_drawdown, top_five_conc,
+               three_year_return, si_return
         FROM db_portfolio_summary
         WHERE account_id = %s
         ORDER BY as_of_date DESC
@@ -315,8 +322,10 @@ def read_portfolio_summary(account_id: int) -> dict:
         "volatility":     row[14],
         "sharpe":         row[15],
         "beta":           row[16],
-        "maxDrawdown":    row[17],
-        "topFiveConc":    row[18],
+        "maxDrawdown":      row[17],
+        "topFiveConc":      row[18],
+        "threeYearReturn":  row[19],
+        "siReturn":         row[20],
     }
 
 
@@ -586,17 +595,23 @@ def compute_chart_data(account_id: int, range_key: str) -> list[dict]:
 
     Returns a list of {label, value, bmk} dicts where:
     - value is the total market value in dollars (sum over all securities)
-    - bmk is None (benchmark data not yet available)
-    - label format: "Mon DD" for 1M, "Mon 'YY" for all other ranges
+    - bmk is the SP500 benchmark value scaled so its first point equals the
+      portfolio's first value, then grows proportionally to benchmark_hist
+    - label format: "Mon DD" for 1M/3M, "Mon 'YY" for all other ranges
 
     range_key: "1M" | "3M" | "1Y" | "3Y" | "ALL"
     """
+    import pandas as pd
     from datetime import date, timedelta
+    from dashboard.portfolio_chart import (
+        _fetch_benchmark_ids, _fetch_benchmark_hist,
+        _align_benchmark, _scale,
+    )
 
     today = date.today()
     range_days = {"1M": 30, "3M": 90, "1Y": 365, "3Y": 365 * 3}
     days = range_days.get(range_key.upper())
-    label_fmt = "%b %d" if range_key.upper() == "1M" else "%b '%y"
+    label_fmt = "%b %d" if range_key.upper() in ["1M", "3M"] else "%b '%y"
 
     if days is not None:
         cutoff = today - timedelta(days=days)
@@ -623,20 +638,46 @@ def compute_chart_data(account_id: int, range_key: str) -> list[dict]:
             cur.execute(sql, params)
             rows = cur.fetchall()
 
+    if not rows:
+        return []
+
+    # ── Portfolio series ──────────────────────────────────────────────────────
+    port_dates  = [r[0] for r in rows]
+    port_values = [float(r[1]) if r[1] is not None else None for r in rows]
+    port_idx    = pd.DatetimeIndex(port_dates)
+    port_first  = next((v for v in port_values if v is not None), None)
+
+    # ── SP500 benchmark ───────────────────────────────────────────────────────
+    bmk_values = [None] * len(rows)
+    if port_first is not None:
+        key_to_id = _fetch_benchmark_ids()
+        sp500_id  = key_to_id.get("sp500")
+        if sp500_id is not None:
+            from_date = port_dates[0]
+            to_date   = port_dates[-1]
+            # Fetch 14 days before from_date so forward-fill covers the first point
+            bmk_hist  = _fetch_benchmark_hist([sp500_id], from_date - timedelta(days=14), to_date)
+            if sp500_id in bmk_hist:
+                aligned   = _align_benchmark(bmk_hist[sp500_id], port_idx)
+                first_val = aligned.dropna()
+                if not first_val.empty:
+                    bmk_values = _scale(aligned, float(first_val.iloc[0]), port_first)
+
+    # ── Assemble response ─────────────────────────────────────────────────────
     return [
         {
-            "label": row[0].strftime(label_fmt),
-            "value": float(row[1]) if row[1] is not None else None,
-            "bmk":   None,
+            "label": port_dates[i].strftime(label_fmt),
+            "value": port_values[i],
+            "bmk":   bmk_values[i],
         }
-        for row in rows
+        for i in range(len(rows))
     ]
 
 
 def read_positions(account_id: int) -> list[dict]:
     """Return positions for the latest as_of_date for account_id."""
     sql = """
-        SELECT security_id, ticker, name, asset_class, currency, market_value, weight,
+        SELECT id, ticker, name, asset_class, currency, market_value, weight,
                day_pnl, day_return, mtd_return, ytd_return, one_year_return, var_contrib
         FROM db_positions
         WHERE account_id = %s
@@ -652,7 +693,7 @@ def read_positions(account_id: int) -> list[dict]:
 
     return [
         {
-            "security_id":   r[0],
+            "id":            r[0],
             "ticker":        r[1],
             "name":          r[2],
             "assetClass":    r[3],

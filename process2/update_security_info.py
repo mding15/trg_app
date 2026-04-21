@@ -89,7 +89,8 @@ def _fetch_security_attributes(cur, security_ids: list) -> pd.DataFrame:
         """
         SELECT security_id, expected_return, currency, "class", sc1, sc2,
                country, region, sector, industry, option_type, payment_frequency,
-               maturity_date, option_strike, underlying_security_id, coupon_rate
+               maturity_date, option_strike, underlying_security_id, coupon_rate,
+               ticker
         FROM security_attribute
         WHERE security_id = ANY(%s)
         """,
@@ -222,6 +223,14 @@ def update_security_info(positions: pd.DataFrame, asof_date=None) -> pd.DataFram
                 idx = positions['SecurityID'].isin(attr_map.index)
                 for pos_col, attr_col in col_mapping.items():
                     positions.loc[idx, pos_col] = positions.loc[idx, 'SecurityID'].map(attr_map[attr_col])
+
+                # Special case: fill Ticker from security_attribute only where currently None/NaN
+                if 'ticker' in attr_map.columns:
+                    ticker_missing = positions['Ticker'].isna() | (positions['Ticker'].astype(str).str.strip() == '')
+                    if ticker_missing.any():
+                        fill_idx = ticker_missing & positions['SecurityID'].isin(attr_map.index)
+                        positions.loc[fill_idx, 'Ticker'] = positions.loc[fill_idx, 'SecurityID'].map(attr_map['ticker'])
+                        logger.info(f'Filled Ticker from security_attribute for {fill_idx.sum()} positions')
 
             # ── Step 5: exclude where MaturityDate < AsofDate ────────────────
             if asof_date is not None:

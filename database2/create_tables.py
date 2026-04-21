@@ -74,8 +74,10 @@ def create_tables() -> None:
                     volatility       FLOAT,
                     sharpe           FLOAT,
                     beta             FLOAT,
-                    max_drawdown     FLOAT,
-                    top_five_conc    FLOAT,
+                    max_drawdown      FLOAT,
+                    top_five_conc     FLOAT,
+                    three_year_return FLOAT,
+                    si_return         FLOAT,
                     updated_at      TIMESTAMP NOT NULL DEFAULT NOW(),
                     UNIQUE (account_id, as_of_date)
                 )
@@ -374,7 +376,9 @@ def create_tables() -> None:
                     currency              VARCHAR(10),
                     rebalancing_frequency VARCHAR(20),
                     is_custom             BOOLEAN       NOT NULL DEFAULT FALSE,
-                    create_date           DATE          NOT NULL DEFAULT current_date
+                    create_date           DATE          NOT NULL DEFAULT current_date,
+                    security_id           VARCHAR(20) NULL,
+                    is_active             BOOLEAN       NOT NULL DEFAULT TRUE
                 )
             """)
             cur.execute("""
@@ -384,6 +388,7 @@ def create_tables() -> None:
                                               ON DELETE CASCADE,
                     asset_class  VARCHAR(50)  NOT NULL,
                     weight       NUMERIC(5,4) NOT NULL,
+                    security_id  varchar(20) NULL,
                     CONSTRAINT chk_weight_range         CHECK (weight >= 0 AND weight <= 1),
                     CONSTRAINT uq_benchmark_asset_class UNIQUE (benchmark_id, asset_class)
                 )
@@ -395,6 +400,15 @@ def create_tables() -> None:
                     benchmark_id  INT    NOT NULL REFERENCES benchmark (benchmark_id),
                     assigned_date DATE   NOT NULL DEFAULT current_date,
                     CONSTRAINT uq_account_benchmark UNIQUE (account_id)
+                )
+            """)
+
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS benchmark_hist (
+                    benchmark_id  INT    NOT NULL REFERENCES benchmark (benchmark_id),
+                    date    DATE   NOT NULL,
+                    value         FLOAT,
+                    CONSTRAINT uq_benchmark_hist UNIQUE (benchmark_id, date)
                 )
             """)
 
@@ -445,6 +459,8 @@ def migrate_tables() -> None:
         "beta              FLOAT",
         "max_drawdown      FLOAT",
         "top_five_conc     FLOAT",
+        "three_year_return FLOAT",
+        "si_return         FLOAT",
     ]
     drop_cols = [
         "var_1d_95_pct",
