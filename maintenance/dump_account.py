@@ -2,13 +2,15 @@
 dump_account.py — Dump pipeline tables for a given account_id and as_of_date to Excel.
 
 Sheets written (in order):
-    mssb_posit          — raw broker feed     (filtered by feed_date = as_of_date)
-    proc_positions      — processed positions (filtered by account_id + as_of_date)
-    position_var        — VaR positions       (filtered by account_id + as_of_date)
-    db_positions        — dashboard positions (filtered by account_id + as_of_date)
-    security_info_view  — security master     (security_ids from proc_positions)
-    sec_beta_view       — betas               (security_ids from proc_positions)
-    security_attribute  — security attributes (security_ids from proc_positions)
+    mssb_posit           — raw broker feed          (filtered by feed_date = as_of_date)
+    proc_positions       — processed positions       (filtered by account_id + as_of_date)
+    position_var         — VaR positions             (filtered by account_id + as_of_date)
+    db_portfolio_summary — portfolio summary         (filtered by account_id + as_of_date)
+    db_positions         — dashboard positions       (filtered by account_id + as_of_date)
+    db_mv_history        — market value history      (filtered by account_id + as_of_date)
+    security_info_view   — security master           (security_ids from proc_positions)
+    sec_beta_view        — betas                     (security_ids from proc_positions)
+    security_attribute   — security attributes       (security_ids from proc_positions)
 
 Each sheet is capped at 1000 rows.
 
@@ -36,7 +38,7 @@ from pathlib import Path
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from database2 import pg_connection
+from database2 import pg_connection, get_proc_asof_date
 
 EXCEL_DIR = Path(__file__).resolve().parent / "Excel"
 ROW_LIMIT = 1000
@@ -143,9 +145,23 @@ def run(account_id: int, as_of_date: date) -> None:
         (account_id, as_of_date),
     )
 
+    log.info("Fetching db_portfolio_summary …")
+    sheets["db_portfolio_summary"] = _fetch_by_date(
+        "db_portfolio_summary",
+        "account_id = %s AND as_of_date = %s",
+        (account_id, as_of_date),
+    )
+
     log.info("Fetching db_positions …")
     sheets["db_positions"] = _fetch_by_date(
         "db_positions",
+        "account_id = %s AND as_of_date = %s",
+        (account_id, as_of_date),
+    )
+
+    log.info("Fetching db_mv_history …")
+    sheets["db_mv_history"] = _fetch_by_date(
+        "db_mv_history",
         "account_id = %s AND as_of_date = %s",
         (account_id, as_of_date),
     )
@@ -214,8 +230,9 @@ if __name__ == "__main__":
     )
     parser.add_argument("--account-id", dest="account_id", type=int, required=True,
                         help="Account ID to dump")
-    parser.add_argument("--date", dest="as_of_date", type=_parse_date, required=True,
-                        metavar="YYYY-MM-DD", help="Position date (as_of_date / feed_date)")
+    parser.add_argument("--date", dest="as_of_date", type=_parse_date, default=None,
+                        metavar="YYYY-MM-DD", help="Position date (as_of_date / feed_date); default: proc_asof_date table")
     args = parser.parse_args()
 
-    run(account_id=args.account_id, as_of_date=args.as_of_date)
+    as_of_date = args.as_of_date or _parse_date(get_proc_asof_date())
+    run(account_id=args.account_id, as_of_date=as_of_date)

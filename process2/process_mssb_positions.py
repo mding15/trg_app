@@ -335,11 +335,13 @@ def _archive_and_replace(cur, account_ids: list[int], feed_date, feed_source: st
         INSERT INTO proc_positions_hist
             (as_of_date, account_id, position_id, security_id, security_name,
              isin, cusip, ticker, quantity, market_value, asset_class, currency,
-             broker_account, broker, last_price, last_price_date, feed_source, insert_time, archived_at)
+             broker_account, broker, last_price, last_price_date, feed_source, insert_time, archived_at,
+             total_cost)
         SELECT
             as_of_date, account_id, position_id, security_id, security_name,
             isin, cusip, ticker, quantity, market_value, asset_class, currency,
-            broker_account, broker, last_price, last_price_date, feed_source, insert_time, NOW()
+            broker_account, broker, last_price, last_price_date, feed_source, insert_time, NOW(),
+            total_cost
         FROM proc_positions
         WHERE account_id = ANY(%s) AND as_of_date < %s AND feed_source = %s
         """,
@@ -495,6 +497,7 @@ def process_mssb_positions(feed_date, account_id=None) -> int:
                     'last_price_date': last_price_date,
                     # ── HARDCODED: feed_source identifies this pipeline ──────
                     'feed_source':     'mssb',
+                    'total_cost':      r.get('total_cost'),
                 })
                 pos_idx += 1
 
@@ -510,12 +513,14 @@ def process_mssb_positions(feed_date, account_id=None) -> int:
                     INSERT INTO proc_positions
                         (as_of_date, account_id, position_id, security_id, security_name,
                          isin, cusip, ticker, quantity, market_value, asset_class, currency,
-                         broker_account, broker, last_price, last_price_date, feed_source)
+                         broker_account, broker, last_price, last_price_date, feed_source,
+                         total_cost)
                     VALUES
                         (%(as_of_date)s, %(account_id)s, %(position_id)s, %(security_id)s,
                          %(security_name)s, %(isin)s, %(cusip)s, %(ticker)s, %(quantity)s,
                          %(market_value)s, %(asset_class)s, %(currency)s, %(broker_account)s,
-                         %(broker)s, %(last_price)s, %(last_price_date)s, %(feed_source)s)
+                         %(broker)s, %(last_price)s, %(last_price_date)s, %(feed_source)s,
+                         %(total_cost)s)
                 """
                 cur.executemany(insert_sql, processed)
 

@@ -30,6 +30,9 @@ CREATE TABLE public.account_parameters (
 	risk_measure varchar(20) null,
 	base_currency varchar(20) null,
 	beta_key varchar(20) null,
+	benchmark varchar(20) null,
+	exp_return varchar(20) null,
+	gauge_measure varchar(20) null,
 	updated_at timestamp DEFAULT now() NOT null
 );
 

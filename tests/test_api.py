@@ -727,6 +727,22 @@ def test_summary_chart(range_key='1M'):
     except requests.exceptions.RequestException as e:
         print(f"An error occurred: {e}")
 
+# /api/summary/top_risk
+def test_summary_top_risk():
+    token  = _load_token()
+    params = {'token': token, 'account_id': SUMMARY_ACCOUNT_ID}
+    url    = f'{host}/api/summary/top_risk'
+    print(url)
+    try:
+        response = requests.get(url, params=params)
+        if response.status_code == 200:
+            print(json.dumps(response.json(), indent=2))
+        else:
+            print(f"Failed: {response.status_code}")
+            print("Response:", response.text)
+    except requests.exceptions.RequestException as e:
+        print(f"An error occurred: {e}")
+
 
 
 ######## PORTFOLIO API ###################
@@ -833,9 +849,10 @@ if __name__ == '__main__':
     # test_summary_concentrations()
     # test_summary_gauges()
     # test_summary_chart(range_key=args.range_key)
+    test_summary_top_risk()
 
     # Portfolio APIs
     # test_portfolio_positions()
     # test_portfolio_summary()
     # test_portfolio_alloc()
-    test_portfolio_chart(range_key=args.range_key)
+    # test_portfolio_chart(range_key=args.range_key)

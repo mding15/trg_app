@@ -31,15 +31,17 @@ def delete_mv_history(account_id: int, as_of_date) -> int:
 
 
 def write_mv_history(account_id: int, as_of_date, mv_rows: list[dict]) -> None:
-    """Upsert rows into db_mv_history. mv_rows: list of {security_id, market_value}."""
+    """Upsert rows into db_mv_history. mv_rows: list of {security_id, broker, broker_account, market_value}."""
     sql = """
-        INSERT INTO db_mv_history (account_id, as_of_date, security_id, market_value)
-        VALUES (%s, %s, %s, %s)
-        ON CONFLICT (account_id, as_of_date, security_id)
+        INSERT INTO db_mv_history (account_id, as_of_date, security_id, broker, broker_account, market_value)
+        VALUES (%s, %s, %s, %s, %s, %s)
+        ON CONFLICT (account_id, as_of_date, security_id, broker, broker_account)
         DO UPDATE SET market_value = EXCLUDED.market_value
     """
-    rows = [(account_id, as_of_date, r["security_id"], r["market_value"])
-            for r in mv_rows if r.get("security_id")]
+    rows = [
+        (account_id, as_of_date, r["security_id"], r.get("broker"), r.get("broker_account"), r["market_value"])
+        for r in mv_rows if r.get("security_id")
+    ]
     with pg_connection() as conn:
         with conn.cursor() as cur:
             cur.executemany(sql, rows)
@@ -151,9 +153,10 @@ def write_positions(account_id: int, as_of_date, positions: list[dict]) -> None:
         INSERT INTO db_positions
             (account_id, as_of_date, security_id, ticker, name, asset_class, currency,
              market_value, weight, day_pnl, day_return, mtd_return,
-             ytd_return, one_year_return, var_contrib, updated_at)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
-        ON CONFLICT (account_id, as_of_date, security_id) DO UPDATE SET
+             ytd_return, one_year_return, var_contrib, unrealized_gain,
+             broker, broker_account, updated_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
+        ON CONFLICT (account_id, as_of_date, security_id, broker, broker_account) DO UPDATE SET
             ticker          = EXCLUDED.ticker,
             name            = EXCLUDED.name,
             asset_class     = EXCLUDED.asset_class,
@@ -166,6 +169,7 @@ def write_positions(account_id: int, as_of_date, positions: list[dict]) -> None:
             ytd_return      = EXCLUDED.ytd_return,
             one_year_return = EXCLUDED.one_year_return,
             var_contrib     = EXCLUDED.var_contrib,
+            unrealized_gain = EXCLUDED.unrealized_gain,
             updated_at      = NOW()
     """
     rows = [(
@@ -173,6 +177,7 @@ def write_positions(account_id: int, as_of_date, positions: list[dict]) -> None:
         p["security_id"], p["ticker"], p["name"], p["assetClass"], p["currency"],
         p["marketValue"], p["weight"], p["dayPnL"], p["dayReturn"],
         p["mtdReturn"], p["ytdReturn"], p["oneYearReturn"], p["varContrib"],
+        p.get("unrealizedGain"), p.get("broker"), p.get("brokerAccount"),
     ) for p in positions]
     with pg_connection() as conn:
         with conn.cursor() as cur:
@@ -272,7 +277,9 @@ def get_mv_history_dates(account_id: int) -> set:
 
 def read_portfolio_summary(account_id: int) -> dict:
     """Return the latest portfolio summary for account_id, including all risk metrics."""
-    sql = """
+    from dashboard.metric_utils import resolve_metric
+
+    ps_sql = """
         SELECT as_of_date, aum, num_positions, day_pnl, day_return,
                mtd_return, ytd_return, one_year_return,
                unrealized_gain, var_1d_95, var_1d_99, var_10d_99,
@@ -284,10 +291,19 @@ def read_portfolio_summary(account_id: int) -> dict:
         ORDER BY as_of_date DESC
         LIMIT 1
     """
+    ap_sql = """
+        SELECT risk_measure, risk_horizon
+        FROM account_parameters
+        WHERE account_id = %s
+        ORDER BY updated_at DESC
+        LIMIT 1
+    """
     with pg_connection() as conn:
         with conn.cursor() as cur:
-            cur.execute(sql, (account_id,))
+            cur.execute(ps_sql, (account_id,))
             row = cur.fetchone()
+            cur.execute(ap_sql, (account_id,))
+            ap = cur.fetchone()
 
     if not row:
         return {}
@@ -299,7 +315,7 @@ def read_portfolio_summary(account_id: int) -> dict:
             return None
         return value / aum * 100
 
-    return {
+    result = {
         "asOfDate":       row[0].strftime("%Y-%m-%d"),
         "aum":            aum,
         "numPositions":   row[2],
@@ -327,6 +343,16 @@ def read_portfolio_summary(account_id: int) -> dict:
         "threeYearReturn":  row[19],
         "siReturn":         row[20],
     }
+
+    # Resolve configured strip-tile metric from account_parameters
+    measure, horizon = (ap[0], ap[1]) if ap else (None, None)
+    field, label = resolve_metric(measure, horizon)
+    result["riskMetric"] = {
+        "label": label or f"{measure} {horizon}" if measure else "—",
+        "value": result.get(field) if field else None,
+    }
+
+    return result
 
 
 # ── Asset allocation ──────────────────────────────────────────────────────────
@@ -536,32 +562,24 @@ def read_var_limit(account_id: int) -> float | None:
 
 # ── Risk page parameters ──────────────────────────────────────────────────────
 
-def read_risk_parameters(account_id: int) -> dict:
-    """Return portfolio parameters for the Risk page parameters table.
-
-    Reads account_run_parameters for all run-time fields (name, dates, tail
-    measure, risk horizon, benchmark, return frequency, expected return,
-    base currency). AUM / portfolio size is fetched separately from
-    db_portfolio_summary because account_run_parameters has no market value.
-    """
-    arp_sql = """
-        SELECT "PortfolioName", "AsofDate", "ReportDate", "TailMeasure",
-               "RiskHorizon", "Benchmark", "ReturnFrequency", "ExpectedReturn",
-               "BaseCurrency"
-        FROM account_run_parameters
+def read_risk_parameters(account_id: int) -> list[dict]:
+    """Return portfolio settings rows for the Risk page parameters table."""
+    ap_sql = """
+        SELECT risk_horizon, risk_measure, base_currency, benchmark, exp_return
+        FROM account_parameters
         WHERE account_id = %s
+        ORDER BY updated_at DESC
+        LIMIT 1
     """
     ps_sql = """
-        SELECT aum, as_of_date
+        SELECT MAX(as_of_date)
         FROM db_portfolio_summary
         WHERE account_id = %s
-        ORDER BY as_of_date DESC
-        LIMIT 1
     """
     with pg_connection() as conn:
         with conn.cursor() as cur:
-            cur.execute(arp_sql, (account_id,))
-            arp = cur.fetchone()
+            cur.execute(ap_sql, (account_id,))
+            ap = cur.fetchone()
             cur.execute(ps_sql, (account_id,))
             ps = cur.fetchone()
 
@@ -570,21 +588,76 @@ def read_risk_parameters(account_id: int) -> dict:
             return None
         return d.strftime("%Y-%m-%d") if hasattr(d, "strftime") else str(d)[:10]
 
-    aum     = ps[0] if ps else None
-    size_mm = round(float(aum) / 1e6, 1) if aum else None
+    def _val(v):
+        return v if v is not None else "—"
 
-    return {
-        "portfolioName":   arp[0] if arp else None,
-        "portfolioSizeMm": size_mm,
-        "asOfDate":        _fmt_date(arp[1]) if arp else None,
-        "reportDate":      _fmt_date(arp[2]) if arp else None,
-        "tailMeasure":     arp[3] if arp else None,
-        "varVolWindow":    arp[4] if arp else None,
-        "benchmark":       arp[5] if arp else None,
-        "returnFrequency": arp[6] if arp else None,
-        "expectedReturns": arp[7] if arp else None,
-        "baseCurrency":    arp[8] if arp else None,
-    }
+    as_of_date    = _fmt_date(ps[0]) if ps else None
+    risk_horizon  = ap[0] if ap else None
+    risk_measure  = ap[1] if ap else None
+    base_currency = ap[2] if ap else None
+    benchmark     = ap[3] if ap else None
+    exp_return    = ap[4] if ap else None
+
+    return [
+        {"label": "As of Date",    "value": _val(as_of_date),    "badge": False},
+        {"label": "Risk Horizon",  "value": _val(risk_horizon),  "badge": True},
+        {"label": "Risk Measure",  "value": _val(risk_measure),  "badge": True},
+        {"label": "Base Currency", "value": _val(base_currency), "badge": True},
+        {"label": "Benchmark",     "value": _val(benchmark),     "badge": True},
+        {"label": "Exp. Return",   "value": _val(exp_return),    "badge": True},
+    ]
+
+
+# ── Risk page measures ────────────────────────────────────────────────────────
+
+def read_risk_measures(account_id: int) -> list[dict]:
+    """Return the four Risk Measures tiles from the latest db_portfolio_summary row."""
+    sql = """
+        SELECT aum, es_1d_95, volatility, beta
+        FROM db_portfolio_summary
+        WHERE account_id = %s
+        ORDER BY as_of_date DESC
+        LIMIT 1
+    """
+    with pg_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql, (account_id,))
+            row = cur.fetchone()
+
+    def _mm(v):
+        return str(round(float(v) / 1e6, 1)) if v is not None else "—"
+
+    def _es(v):
+        """Format ES value: K if <1M, 0.0M if 1M–10M, 0M if >=10M."""
+        if v is None:
+            return "—", None
+        f = float(v)
+        if f < 1_000_000:
+            return str(round(f / 1_000)), "K"
+        elif f < 10_000_000:
+            return str(round(f / 1_000_000, 1)), "M"
+        else:
+            return str(round(f / 1_000_000)), "M"
+
+    def _pct(v):
+        return str(round(float(v), 1)) if v is not None else "—"
+
+    def _ratio(v):
+        return str(round(float(v), 2)) if v is not None else "—"
+
+    aum      = row[0] if row else None
+    es_1d_95 = row[1] if row else None
+    vol      = row[2] if row else None
+    beta     = row[3] if row else None
+
+    es_value, es_unit = _es(es_1d_95)
+
+    return [
+        {"label": "Market Value", "value": _mm(aum),    "unit": "M",     "sub": None},
+        {"label": "ES 95% 1D",   "value": es_value,     "unit": es_unit, "sub": None},
+        {"label": "Volatility",  "value": _pct(vol),    "unit": "%",     "sub": "annualised"},
+        {"label": "Beta",        "value": _ratio(beta), "unit": None,    "sub": "vs S&P 500"},
+    ]
 
 
 # ── Chart data (computed from db_mv_history) ───────────────────────────────────
@@ -666,9 +739,10 @@ def compute_chart_data(account_id: int, range_key: str) -> list[dict]:
     # ── Assemble response ─────────────────────────────────────────────────────
     return [
         {
-            "label": port_dates[i].strftime(label_fmt),
-            "value": port_values[i],
-            "bmk":   bmk_values[i],
+            "label":      port_dates[i].strftime(label_fmt),
+            "as_of_date": port_dates[i].strftime("%Y-%m-%d"),
+            "value":      port_values[i],
+            "bmk":        bmk_values[i],
         }
         for i in range(len(rows))
     ]
@@ -678,7 +752,8 @@ def read_positions(account_id: int) -> list[dict]:
     """Return positions for the latest as_of_date for account_id."""
     sql = """
         SELECT id, ticker, name, asset_class, currency, market_value, weight,
-               day_pnl, day_return, mtd_return, ytd_return, one_year_return, var_contrib
+               day_pnl, day_return, mtd_return, ytd_return, one_year_return, var_contrib,
+               unrealized_gain, broker, broker_account
         FROM db_positions
         WHERE account_id = %s
           AND as_of_date = (
@@ -693,19 +768,138 @@ def read_positions(account_id: int) -> list[dict]:
 
     return [
         {
-            "id":            r[0],
-            "ticker":        r[1],
-            "name":          r[2],
-            "assetClass":    r[3],
-            "currency":      r[4],
-            "marketValue":   r[5],
-            "weight":        r[6],
-            "dayPnL":        r[7],
-            "dayReturn":     r[8],
-            "mtdReturn":     r[9],
-            "ytdReturn":     r[10],
-            "oneYearReturn": r[11],
-            "varContrib":    r[12],
+            "id":             r[0],
+            "ticker":         r[1],
+            "name":           r[2],
+            "assetClass":     r[3],
+            "currency":       r[4],
+            "marketValue":    r[5],
+            "weight":         r[6],
+            "dayPnL":         r[7],
+            "dayReturn":      r[8],
+            "mtdReturn":      r[9],
+            "ytdReturn":      r[10],
+            "oneYearReturn":  r[11],
+            "varContrib":     r[12],
+            "unrealizedGain": r[13],
+            "broker":         r[14],
+            "brokerAccount":  r[15],
         }
         for r in rows
+    ]
+
+
+def get_broker_summary(account_id: int) -> list[dict]:
+    """
+    Return per-(broker, broker_account) summary for account_id from db_positions.
+    Columns: broker, brokerAccount, marketValue, dayReturn, var1d.
+    dayReturn is computed as SUM(day_pnl) / SUM(market_value) * 100.
+    Rows ordered by market_value descending.
+    """
+    sql = """
+        SELECT
+            COALESCE(broker, '—')         AS broker,
+            COALESCE(broker_account, '—') AS broker_account,
+            SUM(market_value)             AS market_value,
+            SUM(day_pnl)                  AS day_pnl,
+            SUM(var_contrib)              AS var1d
+        FROM db_positions
+        WHERE account_id = %s
+          AND as_of_date = (
+              SELECT MAX(as_of_date) FROM db_positions WHERE account_id = %s
+          )
+        GROUP BY broker, broker_account
+        ORDER BY broker, broker_account
+    """
+    with pg_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql, (account_id, account_id))
+            rows = cur.fetchall()
+
+    result = []
+    for broker, broker_account, mv, day_pnl, var1d in rows:
+        mv = float(mv) if mv is not None else 0.0
+        day_return = (
+            round(float(day_pnl) / mv * 100, 2)
+            if mv and day_pnl is not None else None
+        )
+        result.append({
+            "broker":        broker,
+            "brokerAccount": broker_account,
+            "marketValue":   round(mv, 2),
+            "dayReturn":     day_return,
+            "var1d":         round(float(var1d), 2) if var1d is not None else None,
+        })
+    return result
+
+
+def get_top_risk_contributors(account_id: int, n: int = 10) -> list[dict]:
+    """
+    Return up to N positions by % VaR contribution from db_positions.
+
+    Selection logic:
+      neg_quota = floor(n * 0.4)
+      negatives — positions where pct <= -0.5%, sorted by most negative first;
+                  up to neg_quota are selected.
+      positives — remaining n - num_neg_actual slots, sorted by pct descending.
+
+    Output order: positives (largest → smallest), then negatives (least negative → most negative).
+    Each entry: {name, pct}  where pct = var_contrib / total_var_contrib * 100.
+    Returns [] if no data or total_var_contrib is zero.
+    """
+    import math
+
+    sql = """
+        SELECT COALESCE(NULLIF(MIN(ticker), ''), MIN(name)) AS label,
+               SUM(var_contrib) AS var_contrib
+        FROM db_positions
+        WHERE account_id = %s
+          AND as_of_date = (
+              SELECT MAX(as_of_date) FROM db_positions WHERE account_id = %s
+          )
+          AND var_contrib IS NOT NULL
+        GROUP BY security_id
+        HAVING SUM(var_contrib) IS NOT NULL
+    """
+    with pg_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql, (account_id, account_id))
+            rows = cur.fetchall()
+
+    if not rows:
+        return []
+
+    entries = [{"name": row[0] or "", "var_contrib": float(row[1])} for row in rows]
+
+    total = sum(e["var_contrib"] for e in entries)
+    if total == 0:
+        return []
+
+    for e in entries:
+        e["pct"] = round(e["var_contrib"] / total * 100, 2)
+
+    neg_quota = math.floor(n * 0.4)
+
+    # Negatives: must be <= -0.5%, pick the most negative ones up to quota
+    negatives = sorted(
+        (e for e in entries if e["pct"] <= -0.5),
+        key=lambda x: x["pct"],   # ascending: most negative first
+    )
+    selected_neg = negatives[:neg_quota]
+
+    # Positives: fill remaining slots
+    num_pos = n - len(selected_neg)
+    positives = sorted(
+        (e for e in entries if e["pct"] > 0),
+        key=lambda x: x["pct"],
+        reverse=True,
+    )
+    selected_pos = positives[:num_pos]
+
+    # Output: positives descending, then negatives least-negative → most-negative
+    selected_neg_out = sorted(selected_neg, key=lambda x: x["pct"], reverse=True)
+
+    return [
+        {"name": e["name"], "pct": e["pct"]}
+        for e in selected_pos + selected_neg_out
     ]

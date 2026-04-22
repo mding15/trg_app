@@ -42,7 +42,9 @@ def get_positions_on_date(conn, as_of_date, account_id: int) -> pd.DataFrame:
         cur.execute(
             """
             SELECT security_id, ticker, security_name, market_value, currency,
-                   "class" AS asset_class, marginal_tvar, marginal_var, marginal_std, expected_return, beta
+                   "class" AS asset_class, region, sector,
+                   marginal_tvar, marginal_var, marginal_std, expected_return, beta,
+                   total_cost, broker, broker_account
             FROM position_var
             WHERE as_of_date = %s AND account_id = %s
             """,
@@ -54,12 +56,12 @@ def get_positions_on_date(conn, as_of_date, account_id: int) -> pd.DataFrame:
 
 # ── db_mv_history helpers ─────────────────────────────────────────────────────
 
-def mv_map_from_history(conn, account_id: int, ref_date) -> dict[str, float]:
-    """Return {security_id: market_value} for the closest as_of_date <= ref_date."""
+def mv_map_from_history(conn, account_id: int, ref_date) -> dict[tuple, float]:
+    """Return {(security_id, broker, broker_account): market_value} for the closest as_of_date <= ref_date."""
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
         cur.execute(
             """
-            SELECT security_id, market_value FROM db_mv_history
+            SELECT security_id, broker, broker_account, market_value FROM db_mv_history
             WHERE account_id = %s AND as_of_date = (
                 SELECT MAX(as_of_date) FROM db_mv_history
                 WHERE account_id = %s AND as_of_date <= %s
@@ -68,7 +70,10 @@ def mv_map_from_history(conn, account_id: int, ref_date) -> dict[str, float]:
             (account_id, account_id, ref_date),
         )
         rows = cur.fetchall()
-    return {r["security_id"]: float(r["market_value"]) for r in rows if r["market_value"] is not None}
+    return {
+        (r["security_id"], r["broker"], r["broker_account"]): float(r["market_value"])
+        for r in rows if r["market_value"] is not None
+    }
 
 
 def total_mv_from_history(conn, account_id: int, ref_date) -> float | None:
@@ -167,9 +172,10 @@ def compute_portfolio_summary(account_id: int, as_of_date, df: pd.DataFrame) -> 
     """
     import datetime
     latest = pd.to_datetime(as_of_date).date() if not isinstance(as_of_date, datetime.date) else as_of_date
-    first_of_month = latest.replace(day=1)
-    first_of_year  = latest.replace(month=1, day=1)
-    one_year_ago   = latest.replace(year=latest.year - 1)
+    first_of_month  = latest.replace(day=1)
+    first_of_year   = latest.replace(month=1, day=1)
+    one_year_ago    = latest.replace(year=latest.year - 1)
+    three_years_ago = latest.replace(year=latest.year - 3)
 
     mv = pd.to_numeric(df['market_value'], errors='coerce').fillna(0.0)
     count = df['security_id'].nunique()
@@ -238,7 +244,12 @@ def compute_portfolio_summary(account_id: int, as_of_date, df: pd.DataFrame) -> 
         sharpe = None
 
     # ── Other metrics ───────────────────────────────────────────────────────────
-    unrealized_gain = round(aum * 0.10, 2) if aum else None
+    tc = pd.to_numeric(df['total_cost'], errors='coerce').replace(0, float('nan'))
+    if tc.notna().any():
+        ug_series = mv - tc  # NaN where total_cost is NULL — skipped by sum
+        unrealized_gain = round(float(ug_series.sum(skipna=True)), 2)
+    else:
+        unrealized_gain = None
     top_five_conc   = round(sum(top5_mvs) / aum * 100, 2) if aum > 0 else None
 
     return {
@@ -288,16 +299,18 @@ def compute_positions(account_id: int, as_of_date, df: pd.DataFrame) -> list[dic
 
     df['market_value']  = pd.to_numeric(df['market_value'],  errors='coerce').fillna(0.0)
     df['marginal_tvar'] = pd.to_numeric(df['marginal_tvar'], errors='coerce')
+    df['total_cost']    = pd.to_numeric(df['total_cost'],    errors='coerce').replace(0, float('nan'))
 
     df_agg = (
-        df.groupby('security_id')
+        df.groupby(['security_id', 'broker', 'broker_account'])
         .agg(
             security_name=('security_name', 'first'),
             asset_class=  ('asset_class',   'first'),
             currency=     ('currency',      'first'),
             ticker=       ('ticker',        'first'),
-            market_value= ('market_value',  'sum'),
-            marginal_tvar=('marginal_tvar', 'sum'),
+            market_value=   ('market_value',   'sum'),
+            marginal_tvar=  ('marginal_tvar',  'sum'),
+            total_cost=     ('total_cost',     lambda x: x.sum(min_count=1)),
         )
         .reset_index()
     )
@@ -306,24 +319,33 @@ def compute_positions(account_id: int, as_of_date, df: pd.DataFrame) -> list[dic
 
     positions = []
     for _, row in df_agg.iterrows():
-        sid = row['security_id']
-        mv  = float(row['market_value'])
+        sid    = row['security_id']
+        broker = row['broker'] if pd.notna(row['broker']) else None
+        ba     = row['broker_account'] if pd.notna(row['broker_account']) else None
+        key    = (sid, broker, ba)
+        mv     = float(row['market_value'])
         weight = round(mv / total_mv * 100, 2) if total_mv else None
 
+        tc = row['total_cost']
+        ug = round(mv - float(tc), 2) if pd.notna(tc) else None
+
         positions.append({
-            "security_id":   sid,
-            "name":          row['security_name'],
-            "assetClass":    row['asset_class'],
-            "ticker":        row['ticker'],
-            "currency":      row['currency'],
-            "marketValue":   round(mv, 2),
-            "weight":        weight,
-            "dayPnL":        pnl(mv, prev_mv, sid),
-            "dayReturn":     pct_return(mv, prev_mv, sid),
-            "mtdReturn":     pct_return(mv, mtd_mv, sid),
-            "ytdReturn":     pct_return(mv, ytd_mv, sid),
-            "oneYearReturn": pct_return(mv, one_yr_mv, sid),
-            "varContrib":    float(row['marginal_tvar']) if pd.notna(row['marginal_tvar']) else None,
+            "security_id":    sid,
+            "name":           row['security_name'],
+            "assetClass":     row['asset_class'],
+            "ticker":         row['ticker'],
+            "currency":       row['currency'],
+            "marketValue":    round(mv, 2),
+            "weight":         weight,
+            "dayPnL":         pnl(mv, prev_mv, key),
+            "dayReturn":      pct_return(mv, prev_mv, key),
+            "mtdReturn":      pct_return(mv, mtd_mv, key),
+            "ytdReturn":      pct_return(mv, ytd_mv, key),
+            "oneYearReturn":  pct_return(mv, one_yr_mv, key),
+            "varContrib":     float(row['marginal_tvar']) if pd.notna(row['marginal_tvar']) else None,
+            "unrealizedGain": ug,
+            "broker":         broker,
+            "brokerAccount":  ba,
         })
 
     return positions

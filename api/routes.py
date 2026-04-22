@@ -661,9 +661,14 @@ from dashboard.positions_db import (
     count_risk_alerts,
     read_var_limit,
     read_risk_parameters,
+    read_risk_measures,
     compute_chart_data,
+    get_top_risk_contributors,
+    get_broker_summary,
 )
+from dashboard.concentration_db import read_concentrations
 from dashboard.stress_test import read_stress_results
+from dashboard.guage_data import build_gauge_data
 from dashboard.static_data import (
     RISK, FACTOR_EXPOSURES_V2, ASSET_ALLOCATION_DRILLDOWN,
     RISK_METRICS, RISK_ADJUSTED_RETURN, TOP_RISKS, VAR_HISTORY,
@@ -771,15 +776,11 @@ def get_summary_brokers(username):
     account_id, err = _get_account_id(username=username)
     if err:
         return err
-    # Returns mock data until db_broker_summary table is implemented
-    mock = [
-        {"brokerName": "Fidelity",            "marketValue": 45200000, "return1d":  0.42, "var1d": 4310000, "volatility": 5.2},
-        {"brokerName": "Charles Schwab",      "marketValue": 38700000, "return1d": -0.18, "var1d": 3890000, "volatility": 6.1},
-        {"brokerName": "Interactive Brokers", "marketValue": 51300000, "return1d":  0.87, "var1d": 5120000, "volatility": 4.8},
-        {"brokerName": "Goldman Sachs",       "marketValue": 28100000, "return1d":  0.11, "var1d": 2740000, "volatility": 5.5},
-        {"brokerName": "Morgan Stanley",      "marketValue": 14400000, "return1d": -0.05, "var1d": 1810000, "volatility": 7.2},
-    ]
-    return jsonify(mock)
+    try:
+        data = get_broker_summary(account_id)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    return jsonify(data)
 
 
 @app.route("/api/summary/concentrations")
@@ -788,15 +789,25 @@ def get_summary_concentrations(username):
     account_id, err = _get_account_id(username=username)
     if err:
         return err
-    # Returns mock data until db_concentrations table is implemented
-    mock = [
-        {"category": "Asset Class",  "ratio": 3.6},
-        {"category": "Region",       "ratio": 2.8},
-        {"category": "Currency",     "ratio": 2.2},
-        {"category": "Industry",     "ratio": 1.5},
-        {"category": "Single Name",  "ratio": 0.4},
-    ]
-    return jsonify(mock)
+    try:
+        data = read_concentrations(account_id)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    return jsonify(data)
+
+
+@app.route("/api/summary/top_risk")
+@token_required
+def get_summary_top_risk(username):
+    account_id, err = _get_account_id(username=username)
+    if err:
+        return err
+    try:
+        data = get_top_risk_contributors(account_id, n=5)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    return jsonify(data)
+
 
 
 @app.route("/api/summary/gauges")
@@ -806,29 +817,17 @@ def get_summary_gauges(username):
     if err:
         return err
     try:
-        ps = read_portfolio_summary(account_id)
-        sharpe   = ps.get("sharpe")
-        var1d95  = ps.get("var1d95")
-        aum      = ps.get("aum")
-        var_limit_pct = read_var_limit(account_id)
-        var_limit = (var_limit_pct / 100.0 * aum) if (var_limit_pct and aum) else 25000000
-        if var_limit < 1_000_000:
-            var_limit = round(var_limit / 100_000) * 100_000
-        elif var_limit < 10_000_000:
-            var_limit = round(var_limit / 1_000_000) * 1_000_000
-        else:
-            var_limit = round(var_limit / 100_000_000) * 100_000_000
-        var_band  = var_limit * 0.05
+        g = build_gauge_data(account_id)
         data = {
             "sharpe": {
-                "value":  sharpe if sharpe is not None else 0.21,
-                "target": 0.15,
-                "band":   0.05,
+                "value":  g["sharpe_value"],
+                "target": g["sharpe_target"],
+                "band":   g["sharpe_band"],
             },
             "varLimit": {
-                "value": var1d95 if var1d95 is not None else 16900000,
-                "limit": var_limit,
-                "band":  var_band,
+                "value": g["var_value"],
+                "limit": g["var_limit"],
+                "band":  g["var_band"],
             },
         }
     except Exception as e:
@@ -844,7 +843,7 @@ def get_risk_parameters(username):
     account_id, err = _get_account_id(username=username)
     if err:
         return err
-    return jsonify(RISK_PARAMETERS)
+    return jsonify(read_risk_parameters(account_id))
 
 
 @app.route("/api/risk/summary")
@@ -853,7 +852,28 @@ def get_risk_summary(username):
     account_id, err = _get_account_id(username=username)
     if err:
         return err
-    return jsonify(RISK_SUMMARY_MOCK)
+    try:
+        g = build_gauge_data(account_id)
+    except Exception:
+        g = None
+    response = {
+        "measures": read_risk_measures(account_id),
+        "gaugeSharpe": {
+            "value":  g["sharpe_value"]  if g else 0.21,
+            "target": g["sharpe_target"] if g else 0.15,
+            "band":   g["sharpe_band"]   if g else 0.05,
+            "max":    g["sharpe_max"]    if g else 0.65,
+        },
+        "gaugeRisk": {
+            "value":        g["var_value"]         if g else 16_900_000,
+            "limit":        g["var_limit"]         if g else 25_000_000,
+            "band":         g["var_band"]          if g else 1_250_000,
+            "readingValue": g["var_reading_value"] if g else "16.9",
+            "readingUnit":  g["var_reading_unit"]  if g else "M",
+            "targetLabel":  g["var_target_label"]  if g else "25.0M",
+        },
+    }
+    return jsonify(response)
 
 
 @app.route("/api/risk/contributions")
@@ -862,7 +882,11 @@ def get_risk_contributions(username):
     account_id, err = _get_account_id(username=username)
     if err:
         return err
-    return jsonify(RISK_CONTRIB_MOCK)
+    try:
+        data = get_top_risk_contributors(account_id)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    return jsonify(data)
 
 
 @app.route("/api/risk/concentrations")
@@ -871,7 +895,11 @@ def get_risk_concentrations(username):
     account_id, err = _get_account_id(username=username)
     if err:
         return err
-    return jsonify(RISK_CONCENTRATIONS)
+    try:
+        data = read_concentrations(account_id)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    return jsonify(data)
 
 
 @app.route("/api/risk/asset_allocation")
@@ -886,7 +914,13 @@ def get_risk_asset(username):
     account_id, err = _get_account_id(username=username)
     if err:
         return err
-    return jsonify(RISK_ASSET_LEVELS)
+    try:
+        data = _fetch_portfolio_allocation(account_id, "asset")
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    if not data:
+        return jsonify({"error": "No data"}), 404
+    return jsonify(data["levels"])
 
 
 @app.route("/api/risk/industry")
@@ -895,7 +929,13 @@ def get_risk_industry(username):
     account_id, err = _get_account_id(username=username)
     if err:
         return err
-    return jsonify(RISK_INDUSTRY_LEVELS)
+    try:
+        data = _fetch_portfolio_allocation(account_id, "industry")
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    if not data:
+        return jsonify({"error": "No data"}), 404
+    return jsonify(data["levels"])
 
 
 @app.route("/api/risk/region")
@@ -904,7 +944,13 @@ def get_risk_region(username):
     account_id, err = _get_account_id(username=username)
     if err:
         return err
-    return jsonify(RISK_REGION_LEVELS)
+    try:
+        data = _fetch_portfolio_allocation(account_id, "region")
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    if not data:
+        return jsonify({"error": "No data"}), 404
+    return jsonify(data["levels"])
 
 
 @app.route("/api/risk/currency")
@@ -913,7 +959,13 @@ def get_risk_currency(username):
     account_id, err = _get_account_id(username=username)
     if err:
         return err
-    return jsonify(RISK_CURRENCY_LEVELS)
+    try:
+        data = _fetch_portfolio_allocation(account_id, "currency")
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    if not data:
+        return jsonify({"error": "No data"}), 404
+    return jsonify(data["levels"])
 
 
 @app.route("/api/risk/risk_metrics")

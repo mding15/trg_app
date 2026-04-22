@@ -511,7 +511,7 @@ RISK_PARAMETERS = [
 
 RISK_SUMMARY_MOCK = {
     "measures": [
-        {"label": "VaR 95% 1D", "value": "16.9", "unit": "M",  "sub": None},
+        {"label": "Market Value", "value": "16.9", "unit": "M",  "sub": None},
         {"label": "ES 95% 1D",  "value": "24.1", "unit": "M",  "sub": None},
         {"label": "Volatility", "value": "5.9",  "unit": "%",  "sub": "annualised"},
         {"label": "Beta",       "value": "1.2",  "unit": None, "sub": "vs S&P 500"},

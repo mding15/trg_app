@@ -45,6 +45,8 @@ from dashboard.positions_db import (
     write_portfolio_summary,
     write_positions,
 )
+from dashboard.concentration_calc import load_limits, compute_concentrations
+from dashboard.concentration_db import delete_concentrations, write_concentrations
 
 
 # ── logging setup ──────────────────────────────────────────────────────────────
@@ -77,12 +79,17 @@ def _setup_logger(as_of_date, account_id=None) -> logging.Logger:
 # ── helpers ────────────────────────────────────────────────────────────────────
 
 def _build_mv_rows(df: pd.DataFrame) -> list[dict]:
-    """Aggregate market_value by security_id and return as list of {security_id, market_value}."""
+    """Aggregate market_value by (security_id, broker, broker_account) and return as list of dicts."""
     df = df.copy()
     df['market_value'] = pd.to_numeric(df['market_value'], errors='coerce').fillna(0.0)
-    agg = df.groupby('security_id', as_index=False)['market_value'].sum()
+    agg = df.groupby(['security_id', 'broker', 'broker_account'], as_index=False)['market_value'].sum()
     return [
-        {"security_id": row["security_id"], "market_value": float(row["market_value"])}
+        {
+            "security_id":    row["security_id"],
+            "broker":         row["broker"] if pd.notna(row["broker"]) else None,
+            "broker_account": row["broker_account"] if pd.notna(row["broker_account"]) else None,
+            "market_value":   float(row["market_value"]),
+        }
         for _, row in agg.iterrows()
         if row["security_id"]
     ]
@@ -140,6 +147,14 @@ def run(as_of_date=None, account_id=None) -> None:
         positions = compute_positions(account_id, as_of_date=as_of_date, df=df)
         write_positions(account_id, as_of_date, positions)
         logger.info(f"Wrote {len(positions)} positions to db_positions.")
+
+        # d. Compute and write concentrations
+        with pg_connection() as conn:
+            limits = load_limits(conn, account_id)
+        concentrations = compute_concentrations(account_id, as_of_date, df=df, limits=limits)
+        delete_concentrations(account_id, as_of_date)
+        write_concentrations(account_id, as_of_date, concentrations)
+        logger.info(f"Wrote {len(concentrations)} concentration rows to db_concentrations.")
 
     logger.info("=== Dashboard process completed. ===")
 

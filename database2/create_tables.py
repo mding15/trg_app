@@ -6,6 +6,7 @@ Tables:
     db_mv_history        — daily per-symbol market value snapshots
     db_portfolio_summary — pre-computed portfolio summary per (account_id, as_of_date)
     db_positions         — pre-computed positions per (account_id, as_of_date, ticker)
+    db_concentrations    — concentration ratios per (account_id, as_of_date, category)
     mssb_secty_map       — MSSB security identifier mapping
     proc_positions       — processed positions per (account_id, as_of_date, position_id)
     mssb_posit           — raw MSSB position feed
@@ -45,12 +46,14 @@ def create_tables() -> None:
             """)
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS db_mv_history (
-                    id           SERIAL PRIMARY KEY,
-                    account_id   INT NOT NULL,
-                    as_of_date   DATE NOT NULL,
-                    security_id  TEXT NOT NULL,
-                    market_value FLOAT,
-                    UNIQUE (account_id, as_of_date, security_id)
+                    id             SERIAL PRIMARY KEY,
+                    account_id     INT NOT NULL,
+                    as_of_date     DATE NOT NULL,
+                    security_id    TEXT NOT NULL,
+                    broker         TEXT NULL,
+                    broker_account TEXT NULL,
+                    market_value   FLOAT,
+                    UNIQUE (account_id, as_of_date, security_id, broker, broker_account)
                 )
             """)
             cur.execute("""
@@ -100,8 +103,25 @@ def create_tables() -> None:
                     ytd_return      FLOAT,
                     one_year_return FLOAT,
                     var_contrib     FLOAT,
+                    unrealized_gain FLOAT NULL,
+                    broker          TEXT NULL,
+                    broker_account  TEXT NULL,
                     updated_at      TIMESTAMP NOT NULL DEFAULT NOW(),
-                    UNIQUE (account_id, as_of_date, security_id)
+                    UNIQUE (account_id, as_of_date, security_id, broker, broker_account)
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS db_concentrations (
+                    id              SERIAL PRIMARY KEY,
+                    account_id      INT NOT NULL,
+                    as_of_date      DATE NOT NULL,
+                    category        TEXT NOT NULL,
+                    category_name   TEXT NULL,
+                    max_weight      FLOAT NULL,
+                    limit_value     FLOAT NULL,
+                    ratio           FLOAT NULL,
+                    updated_at      TIMESTAMP NOT NULL DEFAULT NOW(),
+                    UNIQUE (account_id, as_of_date, category)
                 )
             """)
             cur.execute("""
@@ -136,7 +156,8 @@ def create_tables() -> None:
                     insert_time     TIMESTAMP NOT NULL DEFAULT NOW(),
                     last_price      numeric NULL,
                     last_price_date date NULL,
-                    feed_source     text NULL
+                    feed_source     text NULL,
+                    total_cost      numeric NULL
                 )
             """)
             cur.execute("""
@@ -201,7 +222,8 @@ def create_tables() -> None:
                     archived_at     TIMESTAMP NOT NULL DEFAULT NOW(),
                     last_price      numeric NULL,
                     last_price_date date NULL,
-                    feed_source     text NULL
+                    feed_source     text NULL,
+                    total_cost      numeric NULL
                 )
             """)
             cur.execute("""
@@ -342,6 +364,7 @@ def create_tables() -> None:
                     tvar                    numeric NULL,
                     marginal_var            numeric NULL,
                     marginal_tvar           numeric NULL,
+                    total_cost              numeric NULL,
                     insert_time             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                     PRIMARY KEY (as_of_date, account_id, pos_id)
                 )

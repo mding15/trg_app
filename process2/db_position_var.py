@@ -149,7 +149,7 @@ def insert_results(results: pd.DataFrame, as_of_date) -> int:
     }
 
     _NUMERIC_COLS = {
-        'quantity', 'market_value', 'last_price',
+        'quantity', 'market_value', 'last_price', 'total_cost',
         'expected_return', 'coupon_rate', 'option_strike', 'underlying_price',
         'risk_free_rate', 'tenor', 'delta', 'gamma', 'vega', 'iv',
         'ir_tenor', 'yield', 'duration', 'convexity',
@@ -165,7 +165,7 @@ def insert_results(results: pd.DataFrame, as_of_date) -> int:
     _TABLE_COLS = [
         'as_of_date', 'account_id', 'pos_id',
         'security_id', 'security_name', 'isin', 'cusip', 'ticker', 'broker_account', 'broker',
-        'quantity', 'market_value', 'currency', 'last_price', 'last_price_date',
+        'quantity', 'market_value', 'total_cost', 'currency', 'last_price', 'last_price_date',
         'asset_class', 'asset_type', 'class', 'sc1', 'sc2',
         'country', 'region', 'sector', 'industry',
         'expected_return', 'coupon_rate', 'option_type', 'option_strike',

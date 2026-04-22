@@ -146,11 +146,11 @@ def _get_leaf_descendants(account_id: int, parent_map: dict[int, list[int]]) -> 
 
 
 # Columns summed across child positions when merging by SecurityID
-_SUM_COLS = {'MarketValue', 'Quantity'}
+_SUM_COLS = {'MarketValue', 'Quantity', 'total_cost'}
 # Columns weighted-averaged by MarketValue
 _WAVG_COLS = {'ExpectedReturn'}
 # Columns that are cleared for virtual parent accounts
-_CLEAR_COLS = {'broker_account', 'exclude_reason'}
+_CLEAR_COLS = {'exclude_reason'}
 
 
 def _merge_positions_for_parent(
@@ -160,22 +160,27 @@ def _merge_positions_for_parent(
 ) -> pd.DataFrame:
     """
     Build consolidated positions for a parent account by merging all leaf descendant
-    positions grouped by SecurityID.
+    positions grouped by (SecurityID, broker, broker_account).
 
     Aggregation rules:
       MarketValue, Quantity  — sum
       ExpectedReturn         — weighted average by MarketValue
-      excluded               — True only if ALL child rows for that SecurityID are excluded;
-                               active (False) if active in any child (option a)
-      broker_account,
-      exclude_reason         — set to None (parent is virtual, no broker account)
+      excluded               — True only if ALL child rows for that group are excluded;
+                               active (False) if active in any child
+      exclude_reason         — set to None (parent is virtual)
       account_id             — set to parent_account_id
       pos_id                 — regenerated as "1", "2", ...
-      all other columns      — first value (static fields, same per SecurityID)
+      all other columns      — first value (static fields, same per group)
     """
+    _GROUP_KEYS = ['SecurityID', 'broker', 'broker_account']
+
     df = all_positions[all_positions['account_id'].isin(leaf_ids)].copy()
     if df.empty:
         return df
+
+    # Fill unknown broker fields before grouping so NULLs form a named group
+    df['broker']         = df['broker'].fillna('Unknown')
+    df['broker_account'] = df['broker_account'].fillna('Unknown')
 
     df['MarketValue'] = pd.to_numeric(df['MarketValue'], errors='coerce').fillna(0.0)
     if 'Quantity' in df.columns:
@@ -184,17 +189,18 @@ def _merge_positions_for_parent(
         df['ExpectedReturn'] = pd.to_numeric(df['ExpectedReturn'], errors='coerce').fillna(0.0)
         df['_er_mv'] = df['MarketValue'] * df['ExpectedReturn']
 
-    # excluded: True only if every occurrence of that SecurityID is explicitly True
+    # excluded: True only if every occurrence of that group is explicitly True
     excluded_agg = (
-        df.groupby('SecurityID')['excluded']
+        df.groupby(_GROUP_KEYS)['excluded']
         .apply(lambda s: all(x is True for x in s))
         .rename('excluded')
         .reset_index()
     )
 
     # Build groupby aggregation — skip columns handled separately
-    _skip = {'SecurityID', 'account_id', 'pos_id', 'excluded',
-             'broker_account', 'exclude_reason', 'ExpectedReturn', '_er_mv'}
+    _skip = {'SecurityID', 'broker', 'broker_account',
+             'account_id', 'pos_id', 'excluded',
+             'exclude_reason', 'ExpectedReturn', '_er_mv'}
     agg_dict: dict[str, str] = {}
     for col in df.columns:
         if col in _skip:
@@ -203,7 +209,7 @@ def _merge_positions_for_parent(
     if '_er_mv' in df.columns:
         agg_dict['_er_mv'] = 'sum'
 
-    merged = df.groupby('SecurityID').agg(agg_dict).reset_index()
+    merged = df.groupby(_GROUP_KEYS).agg(agg_dict).reset_index()
 
     # Resolve weighted-average ExpectedReturn
     if '_er_mv' in merged.columns:
@@ -212,13 +218,12 @@ def _merge_positions_for_parent(
         merged = merged.drop(columns=['_er_mv'])
 
     # Attach excluded aggregation
-    merged = merged.merge(excluded_agg, on='SecurityID', how='left')
+    merged = merged.merge(excluded_agg, on=_GROUP_KEYS, how='left')
 
-    # Regenerate pos_id, set parent identity, clear broker fields
-    merged['pos_id']          = [str(i + 1) for i in range(len(merged))]
-    merged['account_id']      = parent_account_id
-    merged['broker_account']  = None
-    merged['exclude_reason']  = None
+    # Regenerate pos_id, set parent identity, clear exclude_reason
+    merged['pos_id']         = [str(i + 1) for i in range(len(merged))]
+    merged['account_id']     = parent_account_id
+    merged['exclude_reason'] = None
 
     return merged.reset_index(drop=True)
 
