@@ -75,7 +75,8 @@ def create_tables() -> None:
                     es_1d_95         FLOAT,
                     es_99            FLOAT,
                     volatility       FLOAT,
-                    sharpe           FLOAT,
+                    sharpe_vol       FLOAT,
+                    sharpe_var       FLOAT,
                     beta             FLOAT,
                     max_drawdown      FLOAT,
                     top_five_conc     FLOAT,
@@ -247,6 +248,11 @@ def create_tables() -> None:
                 )
             """)
             cur.execute("""
+                CREATE UNIQUE INDEX IF NOT EXISTS uq_account_access_default
+                    ON account_access (user_id)
+                    WHERE is_default = TRUE
+            """)
+            cur.execute("""
                 CREATE TABLE IF NOT EXISTS db_asset_allocation (
                     id             SERIAL PRIMARY KEY,
                     account_id     INT          NOT NULL,
@@ -259,6 +265,19 @@ def create_tables() -> None:
                     var_contrib    FLOAT,
                     updated_at     TIMESTAMP    NOT NULL DEFAULT NOW(),
                     UNIQUE (account_id, as_of_date, asset_class)
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS db_portfolio_breakdown (
+                    id             SERIAL       PRIMARY KEY,
+                    account_id     INT          NOT NULL,
+                    as_of_date     DATE         NOT NULL,
+                    breakdown_type VARCHAR(32)  NOT NULL,
+                    category       VARCHAR(64)  NOT NULL,
+                    weight         FLOAT,
+                    var_contrib    FLOAT,
+                    updated_at     TIMESTAMP    NOT NULL DEFAULT NOW(),
+                    UNIQUE (account_id, as_of_date, breakdown_type, category)
                 )
             """)
             cur.execute("""
@@ -365,6 +384,7 @@ def create_tables() -> None:
                     marginal_var            numeric NULL,
                     marginal_tvar           numeric NULL,
                     total_cost              numeric NULL,
+                    beta                    float NULL,
                     insert_time             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                     PRIMARY KEY (as_of_date, account_id, pos_id)
                 )
@@ -466,58 +486,8 @@ def create_tables() -> None:
 
 
 def migrate_tables() -> None:
-    """
-    Add new columns to existing tables. Safe to run multiple times — uses
-    ADD COLUMN IF NOT EXISTS (PostgreSQL >= 9.6).
-    """
-    add_cols = [
-        "unrealized_gain   FLOAT",
-        "var_1d_95         FLOAT",
-        "var_1d_99         FLOAT",
-        "var_10d_99        FLOAT",
-        "es_1d_95          FLOAT",
-        "es_99             FLOAT",
-        "volatility        FLOAT",
-        "sharpe            FLOAT",
-        "beta              FLOAT",
-        "max_drawdown      FLOAT",
-        "top_five_conc     FLOAT",
-        "three_year_return FLOAT",
-        "si_return         FLOAT",
-    ]
-    drop_cols = [
-        "var_1d_95_pct",
-        "var_1d_99_pct",
-        "var_10d_99_pct",
-        "es_99_pct",
-    ]
-    with pg_connection() as conn:
-        with conn.cursor() as cur:
-            for col in add_cols:
-                cur.execute(f"ALTER TABLE db_portfolio_summary ADD COLUMN IF NOT EXISTS {col};")
-            for col in drop_cols:
-                cur.execute(f"ALTER TABLE db_portfolio_summary DROP COLUMN IF EXISTS {col};")
-            # account hierarchy
-            cur.execute("""
-                ALTER TABLE account
-                    ADD COLUMN IF NOT EXISTS parent_account_id INT DEFAULT NULL
-                        REFERENCES account(account_id);
-            """)
-            # per-user default account
-            cur.execute("""
-                ALTER TABLE account_access
-                    ADD COLUMN IF NOT EXISTS is_default BOOLEAN NOT NULL DEFAULT FALSE;
-            """)
-            cur.execute("""
-                CREATE UNIQUE INDEX IF NOT EXISTS uq_account_access_default
-                    ON account_access (user_id)
-                    WHERE is_default = TRUE;
-            """)
-            # beta on individual positions
-            cur.execute("""
-                ALTER TABLE position_var ADD COLUMN IF NOT EXISTS beta FLOAT;
-            """)
-        conn.commit()
+    """No-op — all migrations are now reflected in create_tables()."""
+    pass
 
 
 if __name__ == "__main__":

@@ -76,7 +76,7 @@ def mv_map_from_history(conn, account_id: int, ref_date) -> dict[tuple, float]:
     }
 
 
-def total_mv_from_history(conn, account_id: int, ref_date) -> float | None:
+def total_mv_from_history(conn, account_id, ref_date):
     """Return total market value for the closest as_of_date <= ref_date."""
     with conn.cursor() as cur:
         cur.execute(
@@ -93,7 +93,7 @@ def total_mv_from_history(conn, account_id: int, ref_date) -> float | None:
     return float(result) if result is not None else None
 
 
-def prev_date_from_history(conn, account_id: int, before_date) -> object | None:
+def prev_date_from_history(conn, account_id, before_date):
     """Return the most recent as_of_date strictly before before_date in db_mv_history."""
     with conn.cursor() as cur:
         cur.execute(
@@ -107,7 +107,7 @@ def prev_date_from_history(conn, account_id: int, before_date) -> object | None:
     return result
 
 
-def earliest_total_mv_from_history(conn, account_id: int) -> float | None:
+def earliest_total_mv_from_history(conn, account_id):
     """Return the total market value at the earliest available date in db_mv_history (since inception)."""
     with conn.cursor() as cur:
         cur.execute(
@@ -141,7 +141,7 @@ def pnl(current_mv: float, base_mv_map: dict, security_id: str):
     return round(current_mv - base, 2)
 
 
-def pct_return_total(current: float, base: float | None) -> float | None:
+def pct_return_total(current, base):
     """Portfolio-level percentage return, or None if base unavailable."""
     if base is None or base == 0:
         return None
@@ -164,7 +164,7 @@ def compute_portfolio_summary(account_id: int, as_of_date, df: pd.DataFrame) -> 
         es_99      = es_1d_95 * 1.41
         volatility = SUM(marginal_std) / aum * sqrt(252)  [stored as %]
         total_ret  = SUM(market_value * expected_return) / aum
-        sharpe     = total_ret / volatility_ratio
+        sharpe_vol = total_ret / volatility_ratio
         beta       = 1.2  [hardcoded placeholder]
         max_drawdown = -12.5  [hardcoded placeholder, %]
         unrealized_gain = aum * 10%  [placeholder]
@@ -239,9 +239,14 @@ def compute_portfolio_summary(account_id: int, as_of_date, df: pd.DataFrame) -> 
         total_return = None
 
     if total_return is not None and vol_ratio:
-        sharpe = round(total_return / vol_ratio, 4)
+        sharpe_vol = round(total_return / vol_ratio, 4)
     else:
-        sharpe = None
+        sharpe_vol = None
+
+    if total_return is not None and var_1d_95 and aum > 0:
+        sharpe_var = round(total_return / (var_1d_95 / aum) / math.sqrt(252), 4)
+    else:
+        sharpe_var = None
 
     # ── Other metrics ───────────────────────────────────────────────────────────
     tc = pd.to_numeric(df['total_cost'], errors='coerce').replace(0, float('nan'))
@@ -270,7 +275,8 @@ def compute_portfolio_summary(account_id: int, as_of_date, df: pd.DataFrame) -> 
         "es1d95":         es_1d_95,
         "es99":           es_99,
         "volatility":     volatility,
-        "sharpe":         sharpe,
+        "sharpeVol":      sharpe_vol,
+        "sharpeVar":      sharpe_var,
         "beta":           mv_weighted_beta,
         "maxDrawdown":    -12.5,
         "topFiveConc":    top_five_conc,

@@ -68,7 +68,7 @@ def write_portfolio_summary(account_id: int, summary: dict) -> None:
                    mtdReturn, ytdReturn, oneYearReturn
     Optional keys (risk metrics, default None):
         unrealizedGain, var1d95, var1d99, var10d99, es1d95, es99,
-        volatility, sharpe, beta, maxDrawdown, topFiveConc
+        volatility, sharpeVol, sharpeVar, beta, maxDrawdown, topFiveConc
     """
     sql = """
         INSERT INTO db_portfolio_summary
@@ -76,11 +76,11 @@ def write_portfolio_summary(account_id: int, summary: dict) -> None:
              day_return, mtd_return, ytd_return, one_year_return,
              unrealized_gain, var_1d_95, var_1d_99, var_10d_99,
              es_1d_95, es_99,
-             volatility, sharpe, beta, max_drawdown, top_five_conc,
+             volatility, sharpe_vol, sharpe_var, beta, max_drawdown, top_five_conc,
              three_year_return, si_return, updated_at)
         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s,
                 %s, %s, %s, %s, %s, %s,
-                %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s, %s,
                 %s, %s, NOW())
         ON CONFLICT (account_id, as_of_date) DO UPDATE SET
             aum               = EXCLUDED.aum,
@@ -97,7 +97,8 @@ def write_portfolio_summary(account_id: int, summary: dict) -> None:
             es_1d_95          = EXCLUDED.es_1d_95,
             es_99             = EXCLUDED.es_99,
             volatility        = EXCLUDED.volatility,
-            sharpe            = EXCLUDED.sharpe,
+            sharpe_vol        = EXCLUDED.sharpe_vol,
+            sharpe_var        = EXCLUDED.sharpe_var,
             beta              = EXCLUDED.beta,
             max_drawdown      = EXCLUDED.max_drawdown,
             top_five_conc     = EXCLUDED.top_five_conc,
@@ -124,7 +125,8 @@ def write_portfolio_summary(account_id: int, summary: dict) -> None:
                 summary.get("es1d95"),
                 summary.get("es99"),
                 summary.get("volatility"),
-                summary.get("sharpe"),
+                summary.get("sharpeVol"),
+                summary.get("sharpeVar"),
                 summary.get("beta"),
                 summary.get("maxDrawdown"),
                 summary.get("topFiveConc"),
@@ -284,7 +286,7 @@ def read_portfolio_summary(account_id: int) -> dict:
                mtd_return, ytd_return, one_year_return,
                unrealized_gain, var_1d_95, var_1d_99, var_10d_99,
                es_1d_95, es_99,
-               volatility, sharpe, beta, max_drawdown, top_five_conc,
+               volatility, sharpe_vol, sharpe_var, beta, max_drawdown, top_five_conc,
                three_year_return, si_return
         FROM db_portfolio_summary
         WHERE account_id = %s
@@ -336,12 +338,13 @@ def read_portfolio_summary(account_id: int) -> dict:
         "es99":           row[13],
         "es99Pct":        _pct(row[13]),
         "volatility":     row[14],
-        "sharpe":         row[15],
-        "beta":           row[16],
-        "maxDrawdown":      row[17],
-        "topFiveConc":      row[18],
-        "threeYearReturn":  row[19],
-        "siReturn":         row[20],
+        "sharpeVol":      row[15],
+        "sharpeVar":      row[16],
+        "beta":           row[17],
+        "maxDrawdown":      row[18],
+        "topFiveConc":      row[19],
+        "threeYearReturn":  row[20],
+        "siReturn":         row[21],
     }
 
     # Resolve configured strip-tile metric from account_parameters
@@ -545,15 +548,12 @@ def count_risk_alerts(account_id: int) -> int:
 
 # ── Account config ─────────────────────────────────────────────────────────────
 
-def read_var_limit(account_id: int) -> float | None:
-    """Return var_limit_pct from account_limit for the given account_id.
-
-    NOTE: verify the column name matches your account_limit table definition.
-    """
+def read_var_limit(account_id):
+    """Return var_limit_dollar from account_limit for the given account_id."""
     with pg_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT limit_value FROM account_limit WHERE account_id = %s AND limit_category = 'var_limit_pct'",
+                "SELECT limit_value FROM account_limit WHERE account_id = %s AND limit_category = 'var_limit_dollar'",
                 (account_id,),
             )
             row = cur.fetchone()

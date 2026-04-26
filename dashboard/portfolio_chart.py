@@ -49,7 +49,7 @@ def _pg_fetch(sql: str, params: tuple) -> list:
             return cur.fetchall()
 
 
-def _fetch_portfolio_mv(account_id: int, cutoff: date | None) -> pd.Series:
+def _fetch_portfolio_mv(account_id, cutoff):
     """Return daily total MV series for account_id indexed by date."""
     if cutoff:
         rows = _pg_fetch(
@@ -73,7 +73,7 @@ def _fetch_portfolio_mv(account_id: int, cutoff: date | None) -> pd.Series:
     )
 
 
-def _fetch_benchmark_ids() -> dict[str, int | None]:
+def _fetch_benchmark_ids():
     """Return {api_key: benchmark_id} for all BENCHMARK_KEYS."""
     names = list(BENCHMARK_KEYS.values())
     rows  = _pg_fetch(
@@ -121,7 +121,7 @@ def _align_benchmark(bmk: pd.Series, target_idx: pd.DatetimeIndex) -> pd.Series:
     return combined.reindex(target_idx)
 
 
-def _scale(bmk_aligned: pd.Series, bmk_first: float, port_first: float) -> list[float | None]:
+def _scale(bmk_aligned, bmk_first, port_first):
     """Scale benchmark so its first value = port_first, proportional thereafter."""
     out = []
     for v in bmk_aligned:
@@ -141,7 +141,7 @@ def _fmt(d: date, fmt: str) -> str:
 
 # ── Public API ────────────────────────────────────────────────────────────────
 
-def get_portfolio_chart_data(account_id: int, range_key: str) -> dict | None:
+def get_portfolio_chart_data(account_id, range_key):
     """
     Build chart data for account_id and range_key.
     Returns None if no portfolio data exists for the account.

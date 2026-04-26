@@ -11,6 +11,8 @@ Steps:
        d. Write to db_portfolio_summary
        e. Compute positions (returns from db_mv_history)
        f. Write to db_positions
+       g. Compute and write concentrations to db_concentrations
+       h. Compute and write breakdowns to db_portfolio_breakdown
 
 Usage:
     python dashboard_process.py                                    # as_of_date from proc_asof_date table
@@ -47,6 +49,8 @@ from dashboard.positions_db import (
 )
 from dashboard.concentration_calc import load_limits, compute_concentrations
 from dashboard.concentration_db import delete_concentrations, write_concentrations
+from dashboard.breakdown_calc import compute_breakdowns
+from dashboard.breakdown_db import delete_breakdowns, write_breakdowns
 
 
 # ── logging setup ──────────────────────────────────────────────────────────────
@@ -155,6 +159,12 @@ def run(as_of_date=None, account_id=None) -> None:
         delete_concentrations(account_id, as_of_date)
         write_concentrations(account_id, as_of_date, concentrations)
         logger.info(f"Wrote {len(concentrations)} concentration rows to db_concentrations.")
+
+        # e. Compute and write portfolio breakdowns
+        breakdowns = compute_breakdowns(account_id, as_of_date, df=df)
+        delete_breakdowns(account_id, as_of_date)
+        write_breakdowns(account_id, as_of_date, breakdowns)
+        logger.info(f"Wrote {len(breakdowns)} breakdown rows to db_portfolio_breakdown.")
 
     logger.info("=== Dashboard process completed. ===")
 

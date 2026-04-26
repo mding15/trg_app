@@ -687,6 +687,16 @@ from dashboard.bar_chart_data import (
     read_region_drilldown,
     read_currency_drilldown,
 )
+from dashboard.settings_params import (
+    PARAMETER_OPTIONS,
+    read_account_parameters,
+    write_account_parameters,
+)
+from dashboard.settings_limits import (
+    read_account_limits,
+    write_account_limits,
+)
+from dashboard.historical import get_historical_data
 
 
 def _get_account_id(require_access: bool = True, username: str = None):
@@ -1021,6 +1031,77 @@ def get_risk_alerts(username):
     except Exception as e:
         return jsonify({"error": str(e)}), 500
     return jsonify(data)
+
+# ── Settings page ─────────────────────────────────────────────────────────────
+
+@app.route("/api/settings/parameters")
+@token_required
+def get_settings_parameters(username):
+    account_id, err = _get_account_id(username=username)
+    if err:
+        return err
+    try:
+        values = read_account_parameters(account_id)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    return jsonify({"values": values, "options": PARAMETER_OPTIONS})
+
+
+@app.route("/api/settings/parameters", methods=["PUT"])
+@token_required
+def put_settings_parameters(username):
+    account_id, err = _get_account_id(username=username)
+    if err:
+        return err
+    body = request.get_json(silent=True) or {}
+    try:
+        write_account_parameters(account_id, body)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    return jsonify({"ok": True})
+
+
+@app.route("/api/settings/limits")
+@token_required
+def get_settings_limits(username):
+    account_id, err = _get_account_id(username=username)
+    if err:
+        return err
+    try:
+        data = read_account_limits(account_id)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    return jsonify(data)
+
+
+@app.route("/api/settings/limits", methods=["PUT"])
+@token_required
+def put_settings_limits(username):
+    account_id, err = _get_account_id(username=username)
+    if err:
+        return err
+    body = request.get_json(silent=True) or {}
+    try:
+        write_account_limits(account_id, body)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    return jsonify({"ok": True})
+
+
+# ── Historical page ───────────────────────────────────────────────────────────
+
+@app.route("/api/historical")
+@token_required
+def get_historical(username):
+    account_id, err = _get_account_id(username=username)
+    if err:
+        return err
+    try:
+        data = get_historical_data(account_id)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    return jsonify(data)
+
 
 # ── Accounts ──────────────────────────────────────────────────────────────────
 

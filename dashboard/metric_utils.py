@@ -8,7 +8,7 @@ METRIC_MAP = {
 }
 
 
-def resolve_metric(measure: str | None, horizon: str | None) -> tuple[str | None, str | None]:
+def resolve_metric(measure, horizon):
     """Return (db_field, display_label) for the given measure/horizon pair, or (None, None)."""
     if not measure or not horizon:
         return None, None

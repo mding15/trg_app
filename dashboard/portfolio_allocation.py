@@ -93,16 +93,16 @@ def _build_slice(
     df: pd.DataFrame,
     dim1: str,
     dim2: str,
-    dim3: str | None,
+    dim3,
     slice_name: str,
     l1_subtitle: str,
     l2_subtitle_tmpl: str,
-    l3_subtitle_tmpl: str | None,
+    l3_subtitle_tmpl,
     holdings_col1: str,
     holdings_col2: str,
-    dim4: str | None = None,
-    l4_subtitle_tmpl: str | None = None,
-    holdings_col3: str | None = None,
+    dim4=None,
+    l4_subtitle_tmpl=None,
+    holdings_col3=None,
 ) -> dict:
     """
     Build levels + holdings for one slice.
