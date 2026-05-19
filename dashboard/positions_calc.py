@@ -308,7 +308,7 @@ def compute_positions(account_id: int, as_of_date, df: pd.DataFrame) -> list[dic
     df['total_cost']    = pd.to_numeric(df['total_cost'],    errors='coerce').replace(0, float('nan'))
 
     df_agg = (
-        df.groupby(['security_id', 'broker', 'broker_account'])
+        df.groupby(['security_id', 'broker', 'broker_account'], dropna=False)
         .agg(
             security_name=('security_name', 'first'),
             asset_class=  ('asset_class',   'first'),

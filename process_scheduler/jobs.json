@@ -13,6 +13,48 @@
     "venv_path": null
   },
 
+  {
+    "id": "pnl_linear_prod",
+    "name": "Linear Products PnL",
+    "description": "Calculates PnL for linear products",
+    "script_path": "api/trgapp/process2/calc_linear_product_pnl.py",
+    "script_type": "python",
+    "schedule_time": null,
+    "dependencies": ["as_of_date"],
+    "max_retries": 2,
+    "retry_delay_seconds": 60,
+    "enabled": true,
+    "venv_path": null
+  },
+
+  {
+    "id": "pnl_bond",
+    "name": "Bond PnL",
+    "description": "Calculates PnL for bond products",
+    "script_path": "api/trgapp/process2/calc_bond_pnl.py",
+    "script_type": "python",
+    "schedule_time": null,
+    "dependencies": ["as_of_date"],
+    "max_retries": 2,
+    "retry_delay_seconds": 60,
+    "enabled": true,
+    "venv_path": null
+  },
+
+    {
+    "id": "calc_beta",
+    "name": "Beta Calculation",
+    "description": "Calculates Beta",
+    "script_path": "api/trgapp/process2/calc_beta.py",
+    "script_type": "python",
+    "schedule_time": null,
+    "dependencies": ["pnl_bond", "pnl_linear_prod"],
+    "max_retries": 2,
+    "retry_delay_seconds": 60,
+    "enabled": true,
+    "venv_path": null
+  },
+
     {
     "id": "mssb_sftp",
     "name": "MSSB SFTP",
@@ -76,7 +118,7 @@
     "script_path": "api/trgapp/process_scheduler/calculate_var.py",
     "script_type": "python",
     "schedule_time": null,
-    "dependencies": ["mssb_preprocess", "test_bed"],
+    "dependencies": ["mssb_preprocess", "tracked_proc", "test_bed"],
     "max_retries": 2,
     "retry_delay_seconds": 60,
     "enabled": true,
@@ -122,5 +164,34 @@
     "retry_delay_seconds": 60,
     "enabled": true,
     "venv_path": null
+  },
+
+  {
+    "id": "calc_benchmark",
+    "name": "Calculate Benchmark",
+    "description": "Calculate benchmark metrics for all accounts.",
+    "script_path": "api/trgapp/process2/calc_benchmark.py",
+    "script_type": "python",
+    "schedule_time": null,
+    "dependencies": ["yh_eod_price"],
+    "max_retries": 2,
+    "retry_delay_seconds": 60,
+    "enabled": true,
+    "venv_path": null
+  },
+
+  {
+    "id": "tracked_proc",
+    "name": "File uploaded positions",
+    "description": "Generate tracked portfolio positions for daily processing",
+    "script_path": "api/trgapp/process2/tracked_proc_positions.py",
+    "script_type": "python",
+    "schedule_time": null,
+    "dependencies": ["yh_eod_price"],
+    "max_retries": 2,
+    "retry_delay_seconds": 60,
+    "enabled": true,
+    "venv_path": null
   }
+
 ]

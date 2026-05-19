@@ -93,29 +93,63 @@ def bond_yield(c, T, q, value):
 # # bucket of two IR risk
 
 # In[7]:
-def read_ust():
-    filename = config['SEC_DIR'] / 'IR_Curves.csv'
-    ust = pd.read_csv(filename)
-    ust = ust[ust['CurveID'] == 'UST'].copy()
-    return ust
+# ── UST curve — lazy-loaded from ir_curves table ──────────────────────────────
 
-# Treasury tenor and in years
-ust_tenors = read_ust()
+_ust_tenors: pd.DataFrame = None
+_tenor_dict: dict         = None
+_loaded                   = False
 
-tenor_dict = ust_tenors.set_index('SecurityID')['Tenor'].to_dict()
-tenor_dict['UST0M'] = 0
+
+def _load_ust() -> None:
+    global _ust_tenors, _tenor_dict, _loaded
+    if _loaded:
+        return
+    from database2 import pg_connection
+    with pg_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                'SELECT "SecurityID", "Tenor" FROM ir_curves WHERE "CurveID" = %s',
+                ('UST',),
+            )
+            rows = cur.fetchall()
+    df = pd.DataFrame(rows, columns=['SecurityID', 'Tenor'])
+    _ust_tenors = df
+    _tenor_dict = df.set_index('SecurityID')['Tenor'].to_dict()
+    _tenor_dict['UST0M'] = 0
+    _loaded = True
+
+
+def _get_ust_tenors() -> pd.DataFrame:
+    _load_ust()
+    return _ust_tenors
+
+
+def _get_tenor_dict() -> dict:
+    _load_ust()
+    return _tenor_dict
+
+
+def get_ust_tenors() -> pd.DataFrame:
+    """Return UST tenor DataFrame, loading from ir_curves on first call."""
+    return _get_ust_tenors()
+
+
+def reload_ust() -> None:
+    """Discard the cache and reload ir_curves from the database."""
+    global _loaded
+    _loaded = False
+    _load_ust()
+
 
 def calc_w1(t, T1, T2):
-    t1, t2 = tenor_dict[T1], tenor_dict[T2]
+    td = _get_tenor_dict()
+    t1, t2 = td[T1], td[T2]
     if t >= t2:
         return 0
-    
     elif t <= t1:
         return 1
-    
     else:
-        w1 = (t2-t) / (t2-t1)
-    
+        w1 = (t2 - t) / (t2 - t1)
     return w1
 
 
@@ -155,8 +189,8 @@ def extract_coupon(name):
 
 # bonds: columns = ['Tenor']
 def calc_riskfree_rate(bonds, price_date):
-    ir_t = ust_tenors['Tenor'].to_list()
-    ir_ids = ust_tenors['SecurityID'].to_list()
+    ir_t   = _get_ust_tenors()['Tenor'].to_list()
+    ir_ids = _get_ust_tenors()['SecurityID'].to_list()
     
     ir_hist = get_ir_hist(ir_ids, price_date, price_date)
     ir_yield = ir_hist.iloc[0]
@@ -212,8 +246,8 @@ def get_ir_hist(ir_ids, from_date, to_date):
 # ir_hist: index=hist_date, column=[UST ID], value=UST yield
 # results: index=hist_date, columns=[SecurityID], values=bond risk free rate
 def calc_ir_yield(bonds, ir_hist):
-    ir_t   = ust_tenors['Tenor'].to_list()
-    ir_ids = ust_tenors['SecurityID'].to_list()
+    ir_t   = _get_ust_tenors()['Tenor'].to_list()
+    ir_ids = _get_ust_tenors()['SecurityID'].to_list()
 
     # delta t = time to last date in years
     last_date = ir_hist.index[-1]

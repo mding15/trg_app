@@ -8,6 +8,7 @@ import pandas as pd
 import xlwings as xw
 from trg_config import config
 from utils import xl_utils, date_utils
+from database2 import pg_connection
 
 BOND_FILE = config['SEC_DIR'] / 'bonds.csv'
 
@@ -22,11 +23,21 @@ def read_bond_info():
 
 
 def get(sec_ids=None):
-    df = read_bond_info()
-    
     if sec_ids is not None:
-        df = df[df['SecurityID'].isin(sec_ids)]
-    
+        query  = 'SELECT * FROM bond_info WHERE "SecurityID" = ANY(%s)'
+        params = (list(sec_ids),)
+    else:
+        query  = 'SELECT * FROM bond_info'
+        params = None
+
+    with pg_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(query, params)
+            cols = [desc[0] for desc in cur.description]
+            rows = cur.fetchall()
+
+    df = pd.DataFrame(rows, columns=cols)
+    df['MaturityDate'] = pd.to_datetime(df['MaturityDate'])
     return df
 
 

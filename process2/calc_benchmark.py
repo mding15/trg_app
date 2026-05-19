@@ -28,7 +28,7 @@ from pathlib import Path
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from database2 import pg_connection
+from database2 import get_proc_asof_date, pg_connection
 
 FILL_WINDOW = 5  # business days for fill-forward price lookup
 
@@ -282,13 +282,22 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Calculate benchmark index values for a given date.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="Examples:\n  python process2/calc_benchmark.py --date 2026-04-20\n",
+        epilog=(
+            "Examples:\n"
+            "  python process2/calc_benchmark.py --date 2026-04-20\n"
+            "  python process2/calc_benchmark.py  # uses get_proc_asof_date()\n"
+        ),
     )
     parser.add_argument(
-        "--date", dest="calc_date", type=_parse_date, required=True,
-        metavar="YYYY-MM-DD", help="Calculation date",
+        "--date", dest="calc_date", type=_parse_date, required=False, default=None,
+        metavar="YYYY-MM-DD", help="Calculation date (default: get_proc_asof_date())",
     )
     args = parser.parse_args()
 
     log = _setup_logger()
+
+    if args.calc_date is None:
+        args.calc_date = _parse_date(get_proc_asof_date())
+        log.info(f"No --date supplied; using proc_asof_date: {args.calc_date}")
+
     run(calc_date=args.calc_date, log=log)

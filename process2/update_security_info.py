@@ -5,8 +5,8 @@ Steps:
     1. Set excluded=True, exclude_reason='unknown security' where SecurityID is NULL.
     2. Set excluded=True, exclude_reason='not modeled' where security is not in the
        current risk model (risk_factor joined with current risk_model, union Treasury securities).
-    3. Update AssetClass, AssetType from security_info.
-    4. Update ExpectedReturn, Currency, Class, SC1, SC2, Country, Region, Sector,
+    3. Update AssetClass, AssetType, Currency from security_info.
+    4. Update ExpectedReturn, Class, SC1, SC2, Country, Region, Sector,
        Industry, OptionType, PaymentFrequency, MaturityDate, OptionStrike,
        UnderlyingSecurityID, CouponRate from security_attribute.
     5. Set excluded=True, exclude_reason='matured' where MaturityDate < AsofDate.
@@ -75,7 +75,7 @@ def _fetch_security_info(cur, security_ids: list) -> pd.DataFrame:
     if not security_ids:
         return pd.DataFrame(columns=['SecurityID', 'AssetClass', 'AssetType'])
     cur.execute(
-        'SELECT "SecurityID", "AssetClass", "AssetType" FROM security_info WHERE "SecurityID" = ANY(%s)',
+        'SELECT "SecurityID", "AssetClass", "AssetType", "Currency" FROM security_info WHERE "SecurityID" = ANY(%s)',
         (security_ids,),
     )
     cols = [desc[0] for desc in cur.description]
@@ -181,9 +181,10 @@ def update_security_info(positions: pd.DataFrame, asof_date=None) -> pd.DataFram
             # collect known SecurityIDs for batch fetching
             known_ids = positions.loc[positions['SecurityID'].notna(), 'SecurityID'].unique().tolist()
 
-            # ── Step 3: update asset_class, asset_type from security_info ────
+            # ── Step 3: update AssetClass, AssetType, Currency from security_info ──
             positions['AssetClass'] = None
             positions['AssetType']  = None
+            positions['Currency']   = None
 
             sec_info = _fetch_security_info(cur, known_ids)
             logger.info(f'Fetched {len(sec_info)} security_info rows')
@@ -193,11 +194,11 @@ def update_security_info(positions: pd.DataFrame, asof_date=None) -> pd.DataFram
                 idx = positions['SecurityID'].isin(info_map.index)
                 positions.loc[idx, 'AssetClass'] = positions.loc[idx, 'SecurityID'].map(info_map['AssetClass'])
                 positions.loc[idx, 'AssetType']  = positions.loc[idx, 'SecurityID'].map(info_map['AssetType'])
+                positions.loc[idx, 'Currency']   = positions.loc[idx, 'SecurityID'].map(info_map['Currency'])
 
             # ── Step 4: update attributes from security_attribute ────────────
             col_mapping = {
                 'ExpectedReturn':       'expected_return',
-                'Currency':             'currency',
                 'Class':                'class',
                 'SC1':                  'sc1',
                 'SC2':                  'sc2',

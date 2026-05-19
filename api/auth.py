@@ -13,9 +13,12 @@ API Authentication:
 from flask import request, jsonify
 import jwt
 import datetime
+import logging
 from functools import wraps
 from api import app, bcrypt
 from database.models import User
+
+logger = logging.getLogger(__name__)
 
 OPS_ROLES = {'admin', 'superadmin', 'support'}
 
@@ -49,25 +52,35 @@ def token_required(f):
         token = request.args.get('token')
 
         if not token:
-            print('Error: token is missing!')
             return jsonify({'message': 'Token is missing!'}), 401
 
         try:
             data = jwt.decode(token, app.config['SECRET_KEY'], algorithms=['HS256'])
             username = data['username']
-            
+            if 'impersonator' in data:
+                logger.info(f'[IMPERSONATION] {data["impersonator"]} acting as {username}')
+
         except jwt.ExpiredSignatureError as e:
-            print("Exception:", e)
             return jsonify({'message': 'Token has expired!'}), 401
 
         except jwt.exceptions.InvalidTokenError as e:
-            print("Exception:", e)
             return jsonify({'message': 'Token is invalid!'}), 401
-
 
         return f(*args, username, **kwargs)
 
     return decorated
+
+
+def create_impersonation_token(superadmin_username: str, target_username: str) -> str:
+    return jwt.encode(
+        {
+            'username':     target_username,
+            'impersonator': superadmin_username,
+            'exp':          datetime.datetime.utcnow() + datetime.timedelta(hours=1),
+        },
+        app.config['SECRET_KEY'],
+        algorithm='HS256',
+    )
 
 def authenticate():
     

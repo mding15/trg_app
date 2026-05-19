@@ -49,5 +49,5 @@ if __name__ == '__main__':
         from register import register_by_id
         register_by_id('yh_eod_price')
     else:
-        extract_eod(['SPY', 'QQQ', 'IWM'])  # example tickers
+        # extract_eod(['SPY', 'QQQ', 'IWM'])  # example tickers
         extract_eod()  # all tickers from current_security

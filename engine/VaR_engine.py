@@ -12,6 +12,7 @@ params:
 
 """
 import datetime
+import os
 import pandas as pd
 import numpy as np
 import xlwings as xw
@@ -47,18 +48,19 @@ def create_DATA(positions, params):
     return DATA
 
 def calc_VaR(positions, params):
+    import traceback
     DATA = create_DATA(positions, params)
     try:
         # pre process
-        pre_process(DATA)      
+        pre_process(DATA)
 
         # calculate VaR
         position_VaR(DATA)
 
     except Exception as e:
-        print(e)
+        traceback.print_exc()
         DATA['Error'] = str(e)
-        
+
 
     return DATA
 
@@ -81,9 +83,14 @@ def pre_process(DATA):
     # additional parameters
     amend_params(params)
 
-    # copy a new positions
-    positions = user_positions[POSITION_COLUMNS].copy()
+    # copy a new positions; reset index so df_series_merge never returns duplicate indices
+    positions = user_positions[POSITION_COLUMNS].copy().reset_index(drop=True)
     positions['pos_id'] = user_positions['pos_id'].values if 'pos_id' in user_positions.columns else positions.index.astype(str)
+
+    # coerce numeric columns — scrubbing can leave them as object dtype
+    for _col in ['Quantity', 'MarketValue', 'ExpectedReturn', 'OptionStrike', 'CouponRate', 'LastPrice']:
+        if _col in positions.columns:
+            positions[_col] = pd.to_numeric(positions[_col], errors='coerce')
 
     # ID columns
     for col in ID_COLUMNS:
@@ -341,10 +348,10 @@ def calc_sensitivities_equity(DATA):
     idx4 = positions['AssetClass'] == 'Commodity'
     idx5 = positions['AssetClass'] == 'REIT'
     
-    idx = idx1 | idx2 | idx3 | idx4 | idx5 
+    idx = idx1 | idx2 | idx3 | idx4 | idx5
     positions.loc[idx, 'DELTA'] = positions['MarketValue']
-    
-    DATA['Positions'] = positions 
+
+    DATA['Positions'] = positions
     
 # xl.add_df_to_excel(positions, wb, 'test_pos', index=False)    
 
@@ -396,21 +403,21 @@ def calc_sensitivities_bond(DATA):
     
     # position sensitivity
     idx = positions['SecurityID'].isin(sec_ids)
-    positions.loc[idx, 'Tenor'] = tools.df_series_merge(positions, bonds['Tenor'], 'SecurityID')
+    positions.loc[idx, 'Tenor']    = tools.df_series_merge(positions, bonds['Tenor'],    'SecurityID')
     positions.loc[idx, 'IR_Tenor'] = tools.df_series_merge(positions, bonds['IR_Tenor'], 'SecurityID')
-    
-    positions.loc[idx, 'Yield']    = tools.df_series_merge(positions, bonds['Yield'], 'SecurityID')
-    positions.loc[idx, 'Duration'] = tools.df_series_merge(positions, bonds['Duration'], 'SecurityID')
-    positions.loc[idx, 'Convexity'] = tools.df_series_merge(positions, bonds['Convexity'], 'SecurityID')
 
-    # corp bond only 
+    positions.loc[idx, 'Yield']    = tools.df_series_merge(positions, bonds['Yield'],    'SecurityID')
+    positions.loc[idx, 'Duration'] = tools.df_series_merge(positions, bonds['Duration'], 'SecurityID')
+    positions.loc[idx, 'Convexity']= tools.df_series_merge(positions, bonds['Convexity'],'SecurityID')
+
+    # corp bond only
     sp_idx = idx & (positions['AssetType'] != 'Treasury')
     positions.loc[sp_idx, 'SpreadDuration'] = tools.df_series_merge(positions, bonds['SpreadDuration'], 'SecurityID')
-    positions.loc[sp_idx, 'SpreadConvexity'] = tools.df_series_merge(positions, bonds['SpreadConvexity'], 'SecurityID')
+    positions.loc[sp_idx, 'SpreadConvexity']= tools.df_series_merge(positions, bonds['SpreadConvexity'],'SecurityID')
 
-    positions.loc[idx, 'IR_PV01'] = -positions['MarketValue'] * positions['Duration'] * 0.0001
+    positions.loc[idx, 'IR_PV01'] = -positions['MarketValue'] * positions['Duration']      * 0.0001
     positions.loc[idx, 'SP_PV01'] = -positions['MarketValue'] * positions['SpreadDuration'] * 0.0001
-    
+
     # Add DELTA for FX risk
     positions.loc[idx, 'DELTA'] = positions['MarketValue']
     
@@ -431,10 +438,10 @@ def calc_sensitivities_structured_notes(DATA):
     
     idx = (positions['AssetClass'] == 'Derivative') & (positions['AssetType']== 'Structured Note')
     
-    positions.loc[idx, 'DELTA'] = positions.loc[idx, 'MarketValue']
-    
-    DATA['Positions'] = positions 
-    
+    positions.loc[idx, 'DELTA'] = positions['MarketValue']
+
+    DATA['Positions'] = positions
+
 def calc_sensitivities_options(DATA):
 
     positions = DATA['Positions']
@@ -448,19 +455,19 @@ def calc_sensitivities_options(DATA):
 
         positions.loc[idx, 'DELTA'] = tools.df_series_merge(positions, greeks['DELTA'], 'SecurityID')
         positions.loc[idx, 'GAMMA'] = tools.df_series_merge(positions, greeks['GAMMA'], 'SecurityID')
-        positions.loc[idx, 'VEGA'] = tools.df_series_merge(positions, greeks['VEGA'], 'SecurityID')
-        positions.loc[idx, 'IV'] = tools.df_series_merge(positions, greeks['IV'], 'SecurityID')
-        
+        positions.loc[idx, 'VEGA']  = tools.df_series_merge(positions, greeks['VEGA'],  'SecurityID')
+        positions.loc[idx, 'IV']    = tools.df_series_merge(positions, greeks['IV'],    'SecurityID')
+
         # calculate position greeks
         df = positions.loc[idx]
-        contract_size = 100 # 100 shares per contract
-        
+        contract_size = 100  # 100 shares per contract
+
         # position_delta = delta * S * q * 100
         positions.loc[idx, 'DELTA'] = df['DELTA'] * df['UnderlyingPrice'] * df['Quantity'] * contract_size
 
-        # position_gamma = gamm * S^2 * q * 100
+        # position_gamma = gamma * S^2 * q * 100
         positions.loc[idx, 'GAMMA'] = df['GAMMA'] * (df['UnderlyingPrice']**2) * df['Quantity'] * contract_size
-        
+
         # position_vega = vega * q * 100
         positions.loc[idx, 'VEGA'] = df['VEGA'] * df['Quantity'] * contract_size
         
@@ -472,7 +479,7 @@ def calc_sensitivities(DATA):
     
     positions[['DELTA', 'GAMMA', 'VEGA', 'IV',
                'IR_Tenor', 'Yield', 'Duration', 'Convexity', 'IR_PV01', 'SP_PV01',
-               'Duration', 'Convexity', 'SpreadDuration', 'SpreadConvexity']] = 0.0
+               'SpreadDuration', 'SpreadConvexity']] = 0.0
     
     DATA['Positions'] = positions 
     
@@ -784,6 +791,28 @@ def write_to_excel(wb, DATA):
         xl.add_df_to_excel(df, wb, k)
 ############################################################################
 # TEST
+
+def write_data_to_excel(DATA: dict, filename: str = 'DATA.xlsx', output_dir: str | None = None) -> None:
+    """Write each element of DATA to a tab in a single Excel workbook in the output subfolder."""
+    if output_dir is None:
+        output_dir = os.path.join(os.path.dirname(__file__), 'output')
+    os.makedirs(output_dir, exist_ok=True)
+    filepath = os.path.join(output_dir, filename)
+
+    with pd.ExcelWriter(filepath, engine='openpyxl') as writer:
+        for key, value in DATA.items():
+            if isinstance(value, pd.DataFrame):
+                index = value.index.name is not None
+                value.to_excel(writer, sheet_name=key[:31], index=index)
+            elif isinstance(value, dict) and any(isinstance(v, pd.DataFrame) for v in value.values()):
+                for sub_key, sub_df in value.items():
+                    if isinstance(sub_df, pd.DataFrame):
+                        sub_df.to_excel(writer, sheet_name=f'{key}_{sub_key}'[:31], index=False)
+            elif isinstance(value, dict):
+                pd.DataFrame([value]).to_excel(writer, sheet_name=key[:31], index=False)
+            else:
+                pd.DataFrame([{key: value}]).to_excel(writer, sheet_name=key[:31], index=False)
+
 
 def test():
     

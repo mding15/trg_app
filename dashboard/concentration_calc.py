@@ -1,8 +1,13 @@
 """
 concentration_calc.py — Compute concentration ratios from position_var data.
 
-For each category, finds the largest constituent by market-value weight,
-then computes ratio = max_weight% / limit% using limits from account_limit.
+compute_concentrations():
+    For each category, finds the largest constituent by market-value weight,
+    then computes ratio = max_weight% / limit%.
+
+compute_hhi_concentrations():
+    For each category, computes HHI = Σ(wᵢ²) (decimal scale, 0–1),
+    equal_weight = 1/n, ratio = HHI / equal_weight.
 
 Categories and their position_var columns:
     Asset Class  → asset_class  (position_var "class", aliased in fetch)
@@ -111,6 +116,58 @@ def compute_concentrations(
             'max_weight':    max_weight,
             'limit_value':   float(limit_val) if limit_val is not None else None,
             'ratio':         ratio,
+        })
+
+    return results
+
+
+def compute_hhi_concentrations(
+    account_id: int,
+    as_of_date,
+    df: pd.DataFrame,
+    limits: dict[str, float],
+) -> list[dict]:
+    """
+    Compute HHI concentration metrics for account_id from a position_var DataFrame.
+
+    HHI = Σ(wᵢ²) where wᵢ are decimal weights (0–1), summed over all constituents
+    including an 'Other' bucket for NULL/blank values.
+    equal_weight = 1 / n  (n = number of distinct constituents including Other).
+    ratio = HHI / equal_weight; NULL if no limit configured.
+
+    Returns a list of dicts:
+        category, equal_weight, hhi, ratio, limit_value
+    """
+    df = df.copy()
+    df['market_value'] = pd.to_numeric(df['market_value'], errors='coerce').fillna(0.0)
+    total_mv = float(df['market_value'].sum())
+
+    results = []
+
+    for label, col, limit_key in _CATEGORIES:
+        if col not in df.columns:
+            continue
+
+        tmp = df[[col, 'market_value']].copy()
+        tmp[col] = tmp[col].replace('', None).fillna('Other')
+
+        agg = tmp.groupby(col)['market_value'].sum().reset_index()
+        n = len(agg)
+        if n == 0 or total_mv == 0:
+            continue
+
+        weights = agg['market_value'] / total_mv  # decimal scale
+        hhi = round(float((weights ** 2).sum()), 6)
+        equal_weight = round(1.0 / n, 6)
+        limit_val = limits.get(limit_key)
+        ratio = round(hhi / equal_weight, 4) if limit_val else None
+
+        results.append({
+            'category':     label,
+            'equal_weight': equal_weight,
+            'hhi':          hhi,
+            'ratio':        ratio,
+            'limit_value':  float(limit_val) if limit_val is not None else None,
         })
 
     return results

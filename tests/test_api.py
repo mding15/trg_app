@@ -848,7 +848,64 @@ def test_settings_limits():
     except requests.exceptions.RequestException as e:
         print(f"An error occurred: {e}")
     
+######## WHAT-IF API ###################
+
+# /api/whatif/portfolios
+def test_whatif_portfolios(account_id=SUMMARY_ACCOUNT_ID):
+    token = _load_token()
+    params = {'token': token, 'account_id': account_id}
+    url = f'{host}/api/whatif/portfolios'
+    print(url)
+    try:
+        response = requests.get(url, params=params)
+        if response.status_code == 200:
+            # print(json.dumps(response.json(), indent=2))
+            # df = pd.DataFrame(response.json()['portfolios'])
+            print(json.dumps(response.json(), indent=2))
+            
+        else:
+            print(f"Failed: {response.status_code}")
+            print("Response:", response.text)
+    except requests.exceptions.RequestException as e:
+        print(f"An error occurred: {e}")
+
+# /api/whatif/portfolio/<int:port_id>/metrics'
+def test_whatif_portfolio_metrics(port_id=5359, account_id=SUMMARY_ACCOUNT_ID):
+    token = _load_token()
+    params = {'token': token}
+    weights = {'fi': 40, 'eq': 35, 'alt': 10, 'ma': 10, 'mm': 5}
+    url = f'{host}/api/whatif/portfolio/{port_id}/metrics'
+    print(url)
+    try:
+        response = requests.post(url, params=params, json={'weights': weights})
+        if response.status_code == 200:
+            print(json.dumps(response.json(), indent=2))
+        else:
+            print(f"Failed: {response.status_code}")
+            print("Response:", response.text)
+    except requests.exceptions.RequestException as e:
+        print(f"An error occurred: {e}")
+
+
+
+# /api/whatif/portfolio/<int:port_id>/allocations
+def test_whatif_allocations(port_id=5359):
+    token = _load_token()
+    params = {'token': token}
     
+    url = f'{host}/api/whatif/portfolio/{port_id}/allocations'
+    print(url)
+    try:
+        response = requests.get(url, params=params)
+        if response.status_code == 200:
+            print(json.dumps(response.json(), indent=2))
+        else:
+            print(f"Failed: {response.status_code}")
+            print("Response:", response.text)
+    except requests.exceptions.RequestException as e:
+        print(f"An error occurred: {e}")
+
+
 
 #############################################################################
 # TEST
@@ -879,6 +936,11 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="TRG API test runner")
     parser.add_argument('--range-key', dest='range_key', default='1M',
                         help="Chart range key passed to test_summary_chart (default: 1M)")
+    parser.add_argument('--account-id', dest='account_id', type=int, default=SUMMARY_ACCOUNT_ID,
+                        help=f"Account ID passed to whatif tests (default: {SUMMARY_ACCOUNT_ID})")
+
+    parser.add_argument('--port-id', dest='port_id', type=int, default=5359,
+                        help=f"Portfolio ID passed to whatif metrics test (default: 5359)")
     args = parser.parse_args()
 
     # Summary APIs
@@ -895,5 +957,10 @@ if __name__ == '__main__':
     # test_portfolio_alloc()
     # test_portfolio_chart(range_key=args.range_key)
 
-    test_historical()
+    # test_historical()
     # test_settings_limits()
+
+    # WHAT-IF APIs
+    test_whatif_portfolios(account_id=args.account_id)
+    # test_whatif_portfolio_metrics(port_id=args.port_id, account_id=args.account_id)
+    # test_whatif_allocations(port_id=args.port_id)

@@ -2,8 +2,9 @@
 yh_fetch.py — Fetch Yahoo Finance price data for a list of tickers and write to CSV.
 
 Subcommands:
-    hist   — call api_hist_price(): writes hist_price and hist_dividend CSVs
-    eod    — call api_eod_price():  writes eod_price CSV (uses today's date)
+    hist    — call api_hist_price(): writes hist_price and hist_dividend CSVs
+    eod     — call api_eod_price():  writes eod_price CSV (uses today's date)
+    profile — call api_stock_profiles(): writes profile CSV
 
 Tickers can be supplied as a colon-separated string or via a CSV file (--file).
 The CSV file must have a 'ticker' column (see CSV/ticker.csv for an example).
@@ -12,12 +13,15 @@ Output files (maintenance/CSV/):
     hist_price_YYYYMMDD_HHMMSS.csv
     hist_dividend_YYYYMMDD_HHMMSS.csv
     eod_price_YYYYMMDD_HHMMSS.csv
+    profile_YYYYMMDD_HHMMSS.csv
 
 Usage:
-    python maintenance/yh_fetch.py hist SPY:AAPL:QQQ
-    python maintenance/yh_fetch.py hist --file CSV/ticker.csv
-    python maintenance/yh_fetch.py eod  SPY:AAPL:QQQ
-    python maintenance/yh_fetch.py eod  --file CSV/ticker.csv
+    python maintenance/yh_fetch.py hist    SPY:AAPL:QQQ
+    python maintenance/yh_fetch.py hist    --file CSV/ticker.csv
+    python maintenance/yh_fetch.py eod     SPY:AAPL:QQQ
+    python maintenance/yh_fetch.py eod     --file CSV/ticker.csv
+    python maintenance/yh_fetch.py profile SPY:AAPL:QQQ
+    python maintenance/yh_fetch.py profile --file CSV/ticker.csv
 """
 from __future__ import annotations
 
@@ -30,7 +34,7 @@ from pathlib import Path
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from detl.yh_extract import api_hist_price, api_eod_price
+from detl.yh_extract import api_hist_price, api_eod_price, api_stock_profiles
 
 CSV_DIR = Path(__file__).resolve().parent / "CSV"
 
@@ -87,6 +91,16 @@ def run_hist(tickers: list[str], log: logging.Logger) -> None:
         _write_csv(div_df, "hist_dividend", log)
 
 
+def run_profile(tickers: list[str], log: logging.Logger) -> None:
+    log.info(f"api_stock_profiles  tickers={tickers}")
+    profile_df = api_stock_profiles(tickers)
+
+    if profile_df.empty:
+        log.warning("api_stock_profiles returned no data.")
+    else:
+        _write_csv(profile_df, "profile", log)
+
+
 def run_eod(tickers: list[str], log: logging.Logger) -> None:
     today = date.today()
     log.info(f"api_eod_price  tickers={tickers}  date={today}")
@@ -106,17 +120,20 @@ if __name__ == "__main__":
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "Examples:\n"
-            "  python maintenance/yh_fetch.py hist SPY:AAPL:QQQ\n"
-            "  python maintenance/yh_fetch.py hist --file CSV/ticker.csv\n"
-            "  python maintenance/yh_fetch.py eod  SPY:AAPL:QQQ\n"
-            "  python maintenance/yh_fetch.py eod  --file CSV/ticker.csv\n"
+            "  python maintenance/yh_fetch.py hist    SPY:AAPL:QQQ\n"
+            "  python maintenance/yh_fetch.py hist    --file CSV/ticker.csv\n"
+            "  python maintenance/yh_fetch.py eod     SPY:AAPL:QQQ\n"
+            "  python maintenance/yh_fetch.py eod     --file CSV/ticker.csv\n"
+            "  python maintenance/yh_fetch.py profile SPY:AAPL:QQQ\n"
+            "  python maintenance/yh_fetch.py profile --file CSV/ticker.csv\n"
         ),
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     for cmd, help_text in [
-        ("hist", "Fetch historical prices and dividends via api_hist_price()"),
-        ("eod",  "Fetch end-of-day prices via api_eod_price()"),
+        ("hist",    "Fetch historical prices and dividends via api_hist_price()"),
+        ("eod",     "Fetch end-of-day prices via api_eod_price()"),
+        ("profile", "Fetch stock profiles via api_stock_profiles()"),
     ]:
         sub = subparsers.add_parser(cmd, help=help_text)
         source = sub.add_mutually_exclusive_group(required=True)
@@ -151,8 +168,10 @@ if __name__ == "__main__":
 
     if args.command == "hist":
         run_hist(tickers, log)
-    else:
+    elif args.command == "eod":
         run_eod(tickers, log)
+    else:
+        run_profile(tickers, log)
 
     log.info("─" * 60)
     log.info("Done.")

@@ -1,3 +1,36 @@
+CREATE TABLE public."user" (
+	user_id int4 DEFAULT nextval('user_id_seq'::regclass) NOT NULL,
+	username varchar(120) NOT NULL,
+	email varchar(120) NOT NULL,
+	"password" varchar(60) NOT NULL,
+	approval int4 NOT NULL,
+	phone varchar(20) NULL,
+	client_id int4 NOT NULL,
+	"role" varchar(20) NULL,
+	create_date date NOT NULL,
+	firstname varchar(100) NULL,
+	lastname varchar(100) NULL,
+	activation_completed bool NULL,
+	webdashboard_login varchar(120) NULL,
+	CONSTRAINT user_email_key UNIQUE (email),
+	CONSTRAINT user_pkey PRIMARY KEY (user_id),
+	CONSTRAINT user_username_key UNIQUE (username),
+	CONSTRAINT user_approval_fk FOREIGN KEY (approval) REFERENCES public.approval(id)
+);
+
+CREATE TABLE public.client (
+	client_id serial4 NOT NULL,
+	client_name varchar(100) NOT NULL,
+	address varchar(200) NULL,
+	contact_person varchar(100) NULL,
+	contact_phone varchar(20) NULL,
+	create_date date NOT NULL,
+	aum varchar(50) NULL,
+	primary_interest varchar(100) NULL,
+	CONSTRAINT client_client_name_key UNIQUE (client_name),
+	CONSTRAINT client_pkey PRIMARY KEY (client_id)
+);
+
 CREATE TABLE public.account_sec_attribute (
 	account_id int4 NOT NULL,
 	security_id varchar(20) NOT NULL,
@@ -50,6 +83,13 @@ CREATE TABLE public.account_parameters_history (
 	archived_at timestamp DEFAULT now() NOT NULL
 );
 
+CREATE TABLE public.account_limit (
+	account_id     int4          NOT NULL,
+	limit_category varchar(100)  NOT NULL,
+	limit_value    numeric       NULL,
+	CONSTRAINT account_limit_pkey PRIMARY KEY (account_id, limit_category)
+);
+
 CREATE TABLE public.account_limit_history (
 	id serial4 NOT NULL,
 	account_id int4 NOT NULL,
@@ -59,3 +99,176 @@ CREATE TABLE public.account_limit_history (
 	archived_at timestamp DEFAULT now() NOT NULL
 );
 
+CREATE TABLE public.portfolio_info (
+	port_id serial4 NOT NULL,
+	port_name varchar(100) NOT NULL,
+	filename varchar(100) NOT NULL,
+	status varchar(20) NULL,
+	report_id varchar(20) NULL,
+	created_by varchar(50) NULL,
+	create_date date NOT NULL,
+	update_date date NOT NULL,
+	message TEXT NULL,
+	port_group_id int4 NULL,                      -- made nullable 2026-04-26
+	as_of_date date NULL,
+	market_value numeric NULL,
+	tail_measure varchar(20) NULL,
+	risk_horizon varchar(20) NULL,
+	benchmark varchar(100) NULL,
+	created_user_id int4 NULL,
+	is_batch bool NULL,
+	account_id int4 NULL,
+	upload_dt timestamp NULL,                     -- added 2026-04-26
+	client_id int4 NULL,                          -- added 2026-04-26
+	port_type varchar(20) NULL,                   -- added 2026-05-16: 'tracked' | 'adhoc' | NULL (legacy)
+	description text NULL,                        -- added 2026-05-16
+	CONSTRAINT portfolio_info_pkey PRIMARY KEY (port_id),
+	CONSTRAINT portfolio_info_client_id_fkey FOREIGN KEY (client_id) REFERENCES public.client(client_id)
+	-- port_group_id FK removed when column made nullable (2026-04-26)
+);
+
+-- Migration (run once against live DB):
+-- ALTER TABLE portfolio_info ADD COLUMN upload_dt TIMESTAMP NULL;
+-- ALTER TABLE portfolio_info ALTER COLUMN port_group_id DROP NOT NULL;
+-- ALTER TABLE portfolio_info DROP CONSTRAINT portfolio_info_port_group_id_fkey;
+-- ALTER TABLE portfolio_info ADD COLUMN client_id INT4 NULL REFERENCES public.client(client_id);
+-- UPDATE portfolio_info pi SET upload_dt = create_date::timestamp WHERE upload_dt IS NULL;
+-- UPDATE portfolio_info pi SET client_id = (SELECT u.client_id FROM "user" u WHERE u.user_id = pi.created_user_id) WHERE client_id IS NULL;
+-- ALTER TABLE portfolio_info ALTER COLUMN message TYPE TEXT;
+-- ALTER TABLE portfolio_info ADD COLUMN IF NOT EXISTS port_type VARCHAR(20) NULL;   -- 2026-05-16
+-- ALTER TABLE portfolio_info ADD COLUMN IF NOT EXISTS description TEXT NULL;         -- 2026-05-16
+
+CREATE TABLE public.port_positions (
+	port_id int4 NOT NULL,
+	"ID" varchar(50) NOT NULL,
+	"SecurityID" varchar(20) NULL,
+	"SecurityName" varchar(200) NULL,
+	"ISIN" varchar(20) NULL,
+	"CUSIP" varchar(20) NULL,
+	"Ticker" varchar(20) NULL,
+	"Quantity" numeric NULL,
+	"MarketValue" numeric NULL,
+	"userAssetClass" varchar(50) NULL,
+	"userCurrency" varchar(20) NULL,
+	"ExpectedReturn" numeric NULL,
+	"Currency" varchar(20) NULL,
+	"Class" varchar(20) NULL,
+	"SC1" varchar(20) NULL,
+	"SC2" varchar(20) NULL,
+	"Country" varchar(50) NULL,
+	"Region" varchar(50) NULL,
+	"Sector" varchar(50) NULL,
+	"Industry" varchar(50) NULL,
+	"OptionType" varchar(20) NULL,
+	"PaymentFrequency" int4 NULL,
+	"MaturityDate" date NULL,
+	"OptionStrike" float4 NULL,
+	"UnderlyingSecurityID" varchar(20) NULL,
+	"CouponRate" numeric NULL,
+	"LastPrice" numeric NULL,
+	"LastPriceDate" date NULL,
+	is_option bool NULL,
+	"UnderlyingID" varchar(20) NULL,
+	unknown_security bool DEFAULT false NOT NULL,
+	asset_class varchar(50) NULL,
+	asset_type varchar(50) NULL
+);
+CREATE INDEX idx_port_positions_port_id ON public.port_positions USING btree (port_id);
+
+CREATE TABLE public.port_parameters (
+	port_id int4 NOT NULL,
+	"PortfolioName" varchar(100) NULL,
+	"AsofDate" date NOT NULL,
+	"ReportDate" date NULL,
+	"RiskHorizon" varchar(20) NULL,
+	"TailMeasure" varchar(20) NULL,
+	"ReturnFrequency" varchar(20) NULL,
+	"Benchmark" varchar(50) NULL,
+	"ExpectedReturn" varchar(20) NULL,
+	"BaseCurrency" varchar(20) NULL
+);
+CREATE INDEX idx_port_id ON public.port_parameters USING btree (port_id);
+
+CREATE TABLE public.limit_category (
+	limit_category varchar(100) NULL,
+	category_label varchar(100) NULL
+);
+
+CREATE TABLE public.asset_class_map (
+	asset_class varchar(100) NULL,
+	class_code varchar(10) NULL
+);
+
+CREATE TABLE public.risk_preset (
+	preset_name    varchar(50)   NOT NULL,
+	limit_category varchar(100)  NOT NULL,
+	limit_value    numeric(10,4) NOT NULL,
+	CONSTRAINT risk_preset_pkey PRIMARY KEY (preset_name, limit_category)
+);
+
+CREATE TABLE public.bond_info (
+	"SecurityID" varchar(50) NULL,
+	"Name" varchar(128) NULL,
+	"ISIN" varchar(50) NULL,
+	"CUSIP" varchar(50) NULL,
+	"BB_Global" varchar(50) NULL,
+	"BB_UNIQUE" varchar(50) NULL,
+	"MaturityDate" date NULL,
+	"IssuedCurrency" varchar(50) NULL,
+	"IssuerTicker" varchar(50) NULL,
+	"Rating" varchar(50) NULL,
+	"Sector" varchar(50) NULL,
+	"Country" varchar(50) NULL,
+	"CouponRate" float4 NULL,
+	"CouponType" varchar(50) NULL,
+	"PaymentFrequency" int4 NULL,
+	"Callable" varchar(50) NULL,
+	"CallDate" date NULL,
+	"Formula" varchar(50) NULL,
+	"Putable" varchar(50) NULL,
+	"DayCountBasis" varchar(50) NULL,
+	"DatedDate" date NULL,
+	"FirstInterestPayment" date NULL,
+	"AddDate" date NULL,
+	"UpdateDate" date NULL
+);
+
+CREATE TABLE public.bond_price (
+	security_id varchar(20) NOT NULL,
+	price_date date NOT NULL,
+	price float8 NOT NULL
+);
+
+CREATE TABLE public.ir_curves (
+	"CurveID" varchar(50) NULL,
+	"SecurityID" varchar(50) NULL,
+	"Ticker" varchar(50) NULL,
+	"Tenor" float4 NULL
+);
+
+CREATE TABLE public.modeled_security (
+	"SecurityID" varchar(20) NOT NULL,
+	"SecurityName" varchar(200) NULL,
+	"Currency" varchar(20) NULL,
+	"AssetClass" varchar(20) NOT NULL,
+	"AssetType" varchar(20) NOT NULL,
+	active bool DEFAULT true NULL,
+	add_at timestamp DEFAULT now() NOT NULL,
+	CONSTRAINT modeled_security_pkey PRIMARY KEY ("SecurityID")
+);
+
+CREATE TABLE public.current_security (
+	"SecurityID" varchar(20) NOT NULL,
+	"SecurityName" varchar(200) NULL,
+	"Currency" varchar(20) NULL,
+	"AssetClass" varchar(20) NOT NULL,
+	"AssetType" varchar(20) NOT NULL,
+	"ISIN" varchar(20) NULL,
+	"CUSIP" varchar(20) NULL,
+	"BB_UNIQUE" varchar(20) NULL,
+	"BB_GLOBAL" varchar(20) NULL,
+	"Ticker" varchar(100) NULL,
+	"DataSource" varchar(20) NULL,
+	"insert_time" TIMESTAMP NULL DEFAULT NOW(),
+	CONSTRAINT current_security_pkey PRIMARY KEY ("SecurityID")
+);

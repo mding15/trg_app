@@ -44,7 +44,7 @@ def scrubbing_portfolio(params, positions, limit):
     
     # update db        
     print('update database')
-    model_aux.update_portfolio_status(port_id, status='running', 
+    model_aux.update_portfolio_status(port_id, status='Running', 
                                       as_of_date=params['AsofDate'], 
                                       market_value=float(market_value), 
                                       tail_measure=params['TailMeasure'], 

@@ -15,6 +15,22 @@ POSITIONS_TAB = '1. Positions'
 PARAMEMTERS_TAB = '3. Parameters'
 LIMIT_TAB = '4. Limit'
 
+_DEFAULT_LIMIT = pd.DataFrame({
+    'Limit Category': [
+        'VaR Limit ($)',
+        'Volatility Limit (%)',
+        'Equity Allocation Limit (%)',
+        'Equity VaR Limit ($)',
+        'Single Name Concentration Risk Limit (VaR Contribution %)',
+        'Industry Concentration Risk Limit  (VaR Contribution %)',
+        'Region Concentration Risk Limit (VaR Contribution %)',
+        'Currency Concentration Risk Limit  (VaR Contribution %)',
+        'Asset Class Concentration Risk Limit (VaR Contribution %)',
+        'Asset Allocation Limit (%)',
+    ],
+    'Limit Value': [100000.00, 0.20, 0.40, 0.60, 0.25, 0.75, 0.90, 0.95, 0.80, 0.40],
+})
+
 
 def read_input_xl(wb):
     # wb = xw.Book('Hedged Portfolio.xlsx')
@@ -35,15 +51,18 @@ def read_input_file(file_path):
     print('start to read:')
     check_sheet(file_path, sheet_name=PARAMEMTERS_TAB)
     check_sheet(file_path, sheet_name=POSITIONS_TAB)
-    check_sheet(file_path, sheet_name=LIMIT_TAB)
+    # check_sheet(file_path, sheet_name=LIMIT_TAB)
     
     params = pd.read_excel(file_path, sheet_name=PARAMEMTERS_TAB)
     
     positions = pd.read_excel(file_path, sheet_name=POSITIONS_TAB, dtype={'ISIN': str, 'CUSIP': str, 'Ticker': str, 'Cusip': str} )
     positions = positions.where(pd.notnull(positions), None)
     
-    limit = pd.read_excel(file_path, sheet_name=LIMIT_TAB)
-    
+    if xl_utils.has_sheet(file_path, sheet_name=LIMIT_TAB) == True:
+        limit = pd.read_excel(file_path, sheet_name=LIMIT_TAB)
+    else:
+        limit = _DEFAULT_LIMIT.copy()
+        
     return process_input(params, positions, limit)
 
 def test_read_input_file():
@@ -103,6 +122,13 @@ def process_input(params, positions, limit):
     if errors:
         error_message.append('\nThe Position has the following errors:')
         error_message.extend(errors)
+
+    # ID uniqueness
+    if 'ID' in positions.columns:
+        dupes = positions['ID'][positions['ID'].duplicated(keep=False)]
+        if not dupes.empty:
+            dupe_list = ', '.join(str(v) for v in dupes.unique())
+            error_message.append(f'\nThe Position tab has duplicate ID values: {dupe_list}')
         
     if error_message:
         error_message.insert(0, 'Your input file has errors!')

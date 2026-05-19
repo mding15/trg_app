@@ -246,13 +246,13 @@ def ir_risk_factors(positions):
     rf['Category'] = 'IR'
     rf['Tenor'] = positions['IR_Tenor']
 
-    bins   = [0] + br.ust_tenors['Tenor'].to_list()
+    bins   = [0] + br.get_ust_tenors()['Tenor'].to_list()
     bins[-1] = 100
 
-    labels = ['UST0M'] + br.ust_tenors.iloc[:-1]['SecurityID'].to_list()
+    labels = ['UST0M'] + br.get_ust_tenors().iloc[:-1]['SecurityID'].to_list()
     rf['T1'] = pd.cut(rf.Tenor, bins=bins, labels=labels)
 
-    labels = br.ust_tenors['SecurityID'].to_list()
+    labels = br.get_ust_tenors()['SecurityID'].to_list()
     rf['T2'] = pd.cut(rf.Tenor, bins=bins, labels=labels)
 
     rf['w1'] = rf[~rf.Tenor.isna()].apply(lambda x: br.calc_w1(x.Tenor, x.T1, x.T2), axis=1)

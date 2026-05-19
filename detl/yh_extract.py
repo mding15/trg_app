@@ -19,7 +19,8 @@ from database import db_utils, pg_connection
 from utils import xl_utils
 
 
-max_workers = 10
+max_workers    = 10
+EOD_BATCH_SIZE = 200
 
 def test_API():
     tickers = ['AXON', 'CCJ']
@@ -391,9 +392,24 @@ def api_stock_profiles(tickers):
     
     return all_profiles
 
-# call API GET_QUOTES
+# call API GET_QUOTES, batching in chunks of EOD_BATCH_SIZE to stay within the API limit
 def api_eod_price(tickers, today):
-    df = YH_API.GET_QUOTES(tickers)
+    batch_dfs = []
+    for i in range(0, len(tickers), EOD_BATCH_SIZE):
+        batch = tickers[i: i + EOD_BATCH_SIZE]
+        try:
+            batch_df = YH_API.GET_QUOTES(batch)
+            batch_dfs.append(batch_df)
+        except Exception as e:
+            print(f"api_eod_price: batch {i}–{i + len(batch) - 1} failed — {e}")
+        if i + EOD_BATCH_SIZE < len(tickers):
+            time.sleep(1)
+
+    if not batch_dfs:
+        print("api_eod_price: no data returned for any batch")
+        return pd.DataFrame()
+
+    df = pd.concat(batch_dfs, ignore_index=True)
     prices = extract_eod_price(df)
     save_eod_price(prices, today)
 

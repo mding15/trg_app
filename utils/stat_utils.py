@@ -51,22 +51,39 @@ def hist_stat(prices):
     
     return df
     
+def expected_shortfall(dist, q=0.05) -> pd.Series:
+    """Return ES as a positive loss for each security (column) in dist.
+
+    ES(q) = E[X | X < Q(q)]
+    
+    """
+    threshold = dist.quantile(q)
+    es = pd.Series(index=dist.columns, dtype=float)
+    for sec_id in dist.columns:
+        tail = dist[sec_id][dist[sec_id] < threshold[sec_id]]
+        es[sec_id] = tail.mean() 
+    return es
+
+
 def dist_stat(dist):
 
     sec_ids = dist.columns.tolist()
 
     # stat dataframe
     df = pd.DataFrame(index=sec_ids)
+    df.index.name = 'SecurityID'
 
     # stats
-    df['min']  = dist.min()
-    df['max']  = dist.max()
-    df['mean'] = dist.mean()
-    df['std'] = dist.std()
-    df['q-1%'] = dist.quantile(0.01)
-    df['q-5%'] = dist.quantile(0.05)
-    df['q-50%'] = dist.quantile(0.5)
-    df['q-95%'] = dist.quantile(0.95)
-    df['q-99%'] = dist.quantile(0.99)
+    df['min']    = dist.min()
+    df['max']    = dist.max()
+    df['mean']   = dist.mean()
+    df['std']    = dist.std()
+    df['q-1%']   = dist.quantile(0.01)
+    df['q-5%']   = dist.quantile(0.05)
+    df['q-50%']  = dist.quantile(0.5)
+    df['q-95%']  = dist.quantile(0.95)
+    df['q-99%']  = dist.quantile(0.99)
+    df['es-5%'] = expected_shortfall(dist, 0.05)
+    df['es-1%'] = expected_shortfall(dist, 0.01)
     return df
     

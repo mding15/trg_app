@@ -29,8 +29,9 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 
 import pandas as pd
 
+from api import app
 from database2 import pg_connection
-from process2 import var_engine
+from engine import VaR_engine as engine
 from process2.db_position_var import fetch_latest_as_of_date, insert_results
 from process2.preprocess_var import preprocess_var
 
@@ -64,6 +65,28 @@ def _setup_logger(feed_source: str | None, as_of_date, account_id=None) -> loggi
 
 
 # ── results builder ────────────────────────────────────────────────────────────
+
+def build_results(positions: pd.DataFrame, DATA: dict) -> pd.DataFrame:
+    """
+    Join input positions with DATA['Positions'] and DATA['VaR'] on pos_id.
+    Only new columns (not already in positions) are brought in from each DataFrame.
+    Result is stored in DATA['Results'] and returned.
+    """
+    result = positions.copy()
+
+    engine_pos = DATA.get('Positions')
+    if engine_pos is not None:
+        new_cols = ['pos_id'] + [c for c in engine_pos.columns if c not in result.columns]
+        result = result.merge(engine_pos[new_cols], on='pos_id', how='left')
+
+    var_df = DATA.get('VaR')
+    if var_df is not None:
+        new_cols = ['pos_id'] + [c for c in var_df.columns if c not in result.columns]
+        result = result.merge(var_df[new_cols], on='pos_id', how='left')
+
+    DATA['Results'] = result
+    return result
+
 
 # ── Parent account hierarchy ───────────────────────────────────────────────────
 
@@ -251,6 +274,7 @@ def _run_var(
     label: str,
     active: pd.DataFrame,
     excluded: pd.DataFrame,
+    params: dict,
     as_of_date,
     betas: dict,
     logger: logging.Logger,
@@ -261,19 +285,21 @@ def _run_var(
     betas — pre-fetched {security_id: beta} for this account (may be empty).
     Raises on engine or DB failure — caller decides whether to skip or abort.
     """
-    var_metrics = var_engine.calc_var(active)   # DataFrame indexed by pos_id, metrics only
-    result = active.set_index('pos_id').join(var_metrics, how='left')
+    with app.app_context():
+        DATA = engine.calc_VaR(active, params)
+
+    result = build_results(active, DATA)
 
     if not excluded.empty:
-        excl = excluded.set_index('pos_id')
-        for col in var_metrics.columns:
-            excl[col] = None
-        result = pd.concat([result, excl])
+        new_cols     = [c for c in result.columns if c not in excluded.columns]
+        excluded_out = excluded.reindex(columns=result.columns)
+        for col in new_cols:
+            excluded_out[col] = None
+        result = pd.concat([result, excluded_out], ignore_index=True)
 
     # add beta to all rows (active + excluded)
     result = add_beta_to_result(result, betas, logger)
 
-    result = result.reset_index()   # bring pos_id back as a column for insert_results
     n = insert_results(result, as_of_date)
     logger.info(f"{label}: {len(active)} positions calculated, {len(excluded)} excluded, {n} rows inserted")
     return n
@@ -332,7 +358,7 @@ def calculate_var(feed_source: str | None = None, as_of_date=None, account_id: i
             excluded = merged[merged['excluded'] == True]
             active   = merged[merged['excluded'] != True]
             try:
-                n = _run_var(f"parent_account_id={account_id}", active, excluded, as_of_date, betas, logger)
+                n = _run_var(f"parent_account_id={account_id}", active, excluded, params, as_of_date, betas, logger)
             except Exception as e:
                 logger.error(f"parent_account_id={account_id}: FAILED — {e}")
                 raise
@@ -360,7 +386,7 @@ def calculate_var(feed_source: str | None = None, as_of_date=None, account_id: i
             excluded = acc_pos[acc_pos['excluded'] == True]
             active   = acc_pos[acc_pos['excluded'] != True]
             try:
-                n = _run_var(f"account_id={account_id}", active, excluded, as_of_date, betas, logger)
+                n = _run_var(f"account_id={account_id}", active, excluded, params, as_of_date, betas, logger)
             except Exception as e:
                 logger.error(f"account_id={account_id}: FAILED — {e}")
                 raise
@@ -409,7 +435,7 @@ def calculate_var(feed_source: str | None = None, as_of_date=None, account_id: i
         active   = acc_pos[acc_pos['excluded'] != True]
         try:
             total_inserted += _run_var(
-                f"account_id={acct_id}", active, excluded, as_of_date,
+                f"account_id={acct_id}", active, excluded, params, as_of_date,
                 _account_betas(acct_id), logger,
             )
         except Exception as e:
@@ -418,7 +444,7 @@ def calculate_var(feed_source: str | None = None, as_of_date=None, account_id: i
 
     logger.info(f"Leaf accounts: {total_inserted} rows inserted across {len(leaf_account_ids)} account(s)")
 
-    # ── Parent account VaR ─────────────────────────────────────────────────────
+    # ── Parent account VaR ────────────────────────────────────────────────────
     if not parent_map:
         logger.info("No parent accounts configured — skipping consolidation.")
     else:
@@ -440,7 +466,7 @@ def calculate_var(feed_source: str | None = None, as_of_date=None, account_id: i
             active   = merged[merged['excluded'] != True]
             try:
                 total_inserted += _run_var(
-                    f"parent_account_id={parent_id}", active, excluded, as_of_date,
+                    f"parent_account_id={parent_id}", active, excluded, params, as_of_date,
                     _account_betas(parent_id), logger,
                 )
             except Exception as e:

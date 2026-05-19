@@ -62,10 +62,11 @@ def write_concentrations(account_id: int, as_of_date, rows: list[dict]) -> None:
 def read_concentrations(account_id: int) -> list[dict]:
     """
     Return concentration rows for the latest as_of_date for account_id,
-    in canonical category order. Format: [{category, ratio}, ...].
+    in canonical category order.
+    Format: [{category, category_name, max_weight, limit_value}, ...].
     """
     sql = """
-        SELECT category, ratio
+        SELECT category, category_name, max_weight, limit_value
         FROM db_concentrations
         WHERE account_id = %s
           AND as_of_date = (
@@ -80,9 +81,17 @@ def read_concentrations(account_id: int) -> list[dict]:
     if not rows:
         return []
 
-    row_map = {r[0]: r[1] for r in rows}
+    def _f(v):
+        return float(v) if v is not None else None
+
+    row_map = {r[0]: {'category_name': r[1], 'max_weight': _f(r[2]), 'limit_value': _f(r[3])} for r in rows}
     return [
-        {"category": cat, "ratio": row_map[cat]}
+        {
+            'category':      cat,
+            'category_name': row_map[cat]['category_name'],
+            'max_weight':    row_map[cat]['max_weight'],
+            'limit_value':   row_map[cat]['limit_value'],
+        }
         for cat in _CATEGORY_ORDER
         if cat in row_map
     ]

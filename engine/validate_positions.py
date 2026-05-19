@@ -13,12 +13,13 @@ from utils import tools, date_utils
 from security import security_info as sc
 
 #################################################################################
-TAIL_MEASURES = ['95% TailVaR', '99% TailVaR', '95% VaR', '99% VaR']
+TAIL_MEASURES = ['95% TailVaR', '99% TailVaR', '95% VaR', '99% VaR', 'ES 95%', 'ES 99%', 'VaR 95%', 'VaR 99%']
 RETURN_FREQUENCIES = ['Daily', 'Weekly', 'Monthly', 'Quarterly']
-BENCHMARKS = ['BM_0_100', 'BM_10_90', 'BM_20_80', 'BM_30_70', 'BM_40_60', 'BM_50_50', 'BM_60_40', 'BM_70_30', 'BM_80_20', 'BM_90_10', 'BM_100_0']
-EXPECTED_RETURN = ['Upload']
+BENCHMARKS = (['BM_0_100', 'BM_10_90', 'BM_20_80', 'BM_30_70', 'BM_40_60', 'BM_50_50', 'BM_60_40', 'BM_70_30', 'BM_80_20', 'BM_90_10', 'BM_100_0'] +
+              ["SP500", "MSCI World", "100/0 Blend", "90/10 Blend", "80/20 Blend", "70/30 Blend", "60/40 Blend", "50/50 Blend", "40/60 Blend", "30/70 Blend", "20/80 Blend", "10/90 Blend","0/100 Blend"])
+EXPECTED_RETURN = ['Upload', 'Asset Class'] + ["Historical", "CAPM", "Black-Litterman", "Factor", "Equilibrium", "MS-Capital-Market", "User-Defined"]
 BASE_CURRENCY_LIST= ['USD', 'EUR','GDP', 'JPY', 'CLP']  # add more      
-RISK_HORIZON_DAYS = {'1 Day':1, 'Day':1, '1 Month':21, 'Month':21, '1 Quarter': 63, 'Quarter': 63,'1 Year':252, 'Year':252}
+RISK_HORIZON_DAYS = {'1 Day':1, 'Day':1, '1 Month':21, 'Month':21, '1 Quarter': 63, 'Quarter': 63,'1 Year':252, 'Year':252, '1D':1, '10D':10, '1M':21, '1Q':63, '1Y':252}
 
 def check_parameters(params):
     errors = []

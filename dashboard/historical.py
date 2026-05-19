@@ -181,15 +181,15 @@ _CONC_CATEGORIES = ['Asset Class', 'Region', 'Currency', 'Industry', 'Single Nam
 
 
 def _read_concentrations_db(account_id: int, dates: list) -> dict:
-    """Return {category: [ratio_or_None per date]} for the given dates."""
+    """Return {category: {ratio, max_weight, limit_value}} with per-date lists for the given dates."""
     if not dates:
-        return {cat: [] for cat in _CONC_CATEGORIES}
+        return {cat: {'ratio': [], 'max_weight': [], 'limit_value': []} for cat in _CONC_CATEGORIES}
 
     with pg_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT as_of_date, category, ratio
+                SELECT as_of_date, category, ratio, max_weight, limit_value
                 FROM db_concentrations
                 WHERE account_id = %s AND as_of_date = ANY(%s)
                 """,
@@ -197,9 +197,19 @@ def _read_concentrations_db(account_id: int, dates: list) -> dict:
             )
             rows = cur.fetchall()
 
-    lookup = {(r[0], r[1]): (float(r[2]) if r[2] is not None else None) for r in rows}
+    def _f(v):
+        return float(v) if v is not None else None
+
+    lookup = {
+        (r[0], r[1]): {'ratio': _f(r[2]), 'max_weight': _f(r[3]), 'limit_value': _f(r[4])}
+        for r in rows
+    }
     return {
-        cat: [lookup.get((d, cat)) for d in dates]
+        cat: {
+            'ratio':       [lookup.get((d, cat), {}).get('ratio')       for d in dates],
+            'max_weight':  [lookup.get((d, cat), {}).get('max_weight')  for d in dates],
+            'limit_value': [lookup.get((d, cat), {}).get('limit_value') for d in dates],
+        }
         for cat in _CONC_CATEGORIES
     }
 
@@ -356,7 +366,14 @@ def get_historical_data(account_id):
             },
             'concentrations': {
                 'series': [
-                    {'name': cat, 'data': conc_data[cat]}
+                    {
+                        'name':  cat,
+                        'data':  conc_data[cat]['max_weight'],
+                        'limit': next(
+                            (v for v in reversed(conc_data[cat]['limit_value']) if v is not None),
+                            None,
+                        ),
+                    }
                     for cat in _CONC_CATEGORIES
                     if cat in conc_data
                 ],

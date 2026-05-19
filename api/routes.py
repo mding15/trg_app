@@ -57,9 +57,19 @@ from api import app, request_handler, bcrypt, swagger
 from api import request_handler_ft
 from api import create_account, schedule_demo_handler, request_demo_handler, sso_cookie
 from api import portfolios
-from api.auth import token_required, ops_role_required, authenticate
+from api.auth import token_required, ops_role_required, authenticate, create_impersonation_token
 from api import upload_handler
 from api import account_mgmt
+
+from dashboard.portfolios_page import (
+    list_portfolios,
+    delete_portfolio         as pp_delete_portfolio_impl,
+    list_broker_feeds,
+    get_broker_settings, delete_broker_setting, create_broker_setting,
+    list_tracked_portfolios, list_adhoc_portfolios, list_position_history,
+)
+from dashboard.upload_portfolio import upload_portfolio as pp_upload_portfolio_impl
+from dashboard.whatif import get_whatif_portfolios, get_whatif_allocations, get_whatif_alternatives, post_whatif_metrics
 
 from database.models import User as User
 from database import db_utils, model_aux, ms_sql_server
@@ -490,6 +500,37 @@ def risk_calculator(username):
 
 ################################################################################################
 
+# ── Impersonation ─────────────────────────────────────────────────────────────
+
+@app.route('/api/impersonate/<target_username>', methods=['POST'])
+@token_required
+def start_impersonation(username, target_username):
+    requester = User.query.filter_by(username=username).first()
+    if not requester or requester.role != 'superadmin':
+        return jsonify({'error': 'Superadmin role required'}), 403
+    target = User.query.filter_by(username=target_username).first()
+    if not target:
+        return jsonify({'error': f'User {target_username!r} not found'}), 404
+    if target.role == 'superadmin':
+        return jsonify({'error': 'Cannot impersonate another superadmin'}), 403
+    token = create_impersonation_token(username, target_username)
+    return jsonify({'token': token, 'impersonating': target_username}), 200
+
+
+@app.route('/api/impersonate/whoami', methods=['GET'])
+@token_required
+def impersonate_whoami(username):
+    import jwt as _jwt
+    raw = request.args.get('token', '')
+    data = _jwt.decode(raw, app.config['SECRET_KEY'], algorithms=['HS256'])
+    impersonator = data.get('impersonator')
+    return jsonify({
+        'username':         username,
+        'impersonator':     impersonator,
+        'is_impersonating': impersonator is not None,
+    }), 200
+
+
 @app.route('/api/test', methods=['POST'])
 @token_required
 def test(username):
@@ -696,6 +737,7 @@ from dashboard.settings_limits import (
     read_account_limits,
     write_account_limits,
 )
+from dashboard.settings_presets import get_presets
 from dashboard.historical import get_historical_data
 
 
@@ -1088,6 +1130,15 @@ def put_settings_limits(username):
     return jsonify({"ok": True})
 
 
+@app.route("/api/settings/presets")
+@token_required
+def get_settings_presets(username):
+    account_id, err = _get_account_id(username=username)
+    if err:
+        return err
+    return jsonify(get_presets(account_id))
+
+
 # ── Historical page ───────────────────────────────────────────────────────────
 
 @app.route("/api/historical")
@@ -1111,11 +1162,11 @@ def get_accounts(username):
     accounts = get_accounts_for_user(username)
     return jsonify(accounts)
 
-# ── Portfolio page ────────────────────────────────────────────────────────────
+# ── Holdings page ─────────────────────────────────────────────────────────────
 
-@app.route("/api/portfolio/summary")
+@app.route("/api/holdings/summary")
 @token_required
-def get_portfolio_summary(username):
+def get_holdings_summary(username):
     account_id, err = _get_account_id(username=username)
     if err:
         return err
@@ -1140,9 +1191,9 @@ def get_portfolio_summary(username):
     })
 
 
-@app.route("/api/portfolio/positions")
+@app.route("/api/holdings/positions")
 @token_required
-def get_positions(username):
+def get_holdings_positions(username):
     account_id, err = _get_account_id(username=username)
     if err:
         return err
@@ -1153,9 +1204,9 @@ def get_positions(username):
     return jsonify(data)
 
 
-@app.route("/api/portfolio/chart/<range_key>")
+@app.route("/api/holdings/chart/<range_key>")
 @token_required
-def get_portfolio_chart(username, range_key):
+def get_holdings_chart(username, range_key):
     account_id, err = _get_account_id(username=username)
     if err:
         return err
@@ -1165,9 +1216,9 @@ def get_portfolio_chart(username, range_key):
     return jsonify(data)
 
 
-@app.route("/api/portfolio/allocation")
+@app.route("/api/holdings/allocation")
 @token_required
-def get_portfolio_allocation(username):
+def get_holdings_allocation(username):
     account_id, err = _get_account_id(username=username)
     if err:
         return err
@@ -1180,3 +1231,204 @@ def get_portfolio_allocation(username):
         return jsonify({"error": f"No data for slice: {slice_key}"}), 404
     return jsonify(data)
 
+
+# ── Portfolios page ────────────────────────────────────────────────────────────
+
+@app.route('/api/portfolios', methods=['GET'])
+@token_required
+def pp_list_portfolios(username):
+    return jsonify(list_portfolios(username)), 200
+
+
+@app.route('/api/portfolios/upload', methods=['POST'])
+@token_required
+def pp_upload_portfolio(username):
+    account_id, err = _get_account_id(username=username)
+    if err:
+        return err
+    port_type   = request.form.get('type', '').strip() or None
+    description = request.form.get('description', '').strip() or None
+
+    if port_type == 'tracked':
+        name = ('Positions ' + datetime.date.today().strftime('%Y-%m-%d'))
+    elif port_type == 'adhoc':
+        name = request.form.get('name', '').strip()
+        if not name:
+            return jsonify({'error': 'Portfolio name is required'}), 400
+    else:
+        name = request.form.get('name', '').strip()
+        if not name:
+            return jsonify({'error': 'Portfolio name is required'}), 400
+
+    try:
+        entry = pp_upload_portfolio_impl(username, name, request, account_id,
+                                         port_type=port_type, description=description)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 400
+    return jsonify(entry), 201
+
+
+@app.route('/api/portfolios/<pid>', methods=['DELETE'])
+@token_required
+def pp_delete_portfolio(username, pid):
+    if not pp_delete_portfolio_impl(pid, username):
+        return jsonify({'error': 'Not found'}), 404
+    return jsonify({'ok': True}), 200
+
+
+@app.route('/api/portfolios/<pid>/download', methods=['GET'])
+@token_required
+def pp_download_portfolio(username, pid):
+    from database2 import pg_connection
+    from dashboard.upload_portfolio import get_portfolio_file_path
+    with pg_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT pi.filename, pi.client_id
+                FROM portfolio_info pi
+                JOIN "user" u ON u.client_id = pi.client_id
+                WHERE pi.port_id = %s AND u.username = %s
+                """,
+                (pid, username),
+            )
+            row = cur.fetchone()
+    if not row:
+        return jsonify({'error': 'Not found'}), 404
+    filename, client_id = row
+    file_path = get_portfolio_file_path(client_id, filename)
+    if not file_path.exists():
+        return jsonify({'error': 'File not found on server'}), 404
+    return send_from_directory(file_path.parent, file_path.name, as_attachment=True)
+
+
+@app.route('/api/portfolios/<int:port_id>/clone', methods=['POST'])
+@token_required
+def pp_clone_portfolio(username, port_id):
+    from dashboard.upload_portfolio import clone_portfolio as _clone_portfolio_impl
+    body = request.get_json(silent=True) or {}
+    name = (body.get('name') or '').strip()
+    if not name:
+        return jsonify({'error': 'Portfolio name is required'}), 400
+    target_weights = body.get('weights') or None
+    try:
+        new_port_id = _clone_portfolio_impl(port_id, name, username, target_weights=target_weights)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 400
+    return jsonify({'port_id': new_port_id}), 201
+
+
+@app.route('/api/broker/settings', methods=['GET'])
+@token_required
+def pp_list_broker_settings(username):
+    account_id, err = _get_account_id(username=username)
+    if err:
+        return err
+    try:
+        return jsonify(get_broker_settings(account_id)), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/broker/settings/<int:sid>', methods=['DELETE'])
+@token_required
+def pp_delete_broker_setting(username, sid):
+    account_id, err = _get_account_id(username=username)
+    if err:
+        return err
+    if not delete_broker_setting(account_id, sid, deleted_by=username):
+        return jsonify({'error': 'Not found or access denied'}), 404
+    return jsonify({'ok': True}), 200
+
+
+@app.route('/api/broker/feeds', methods=['GET'])
+@token_required
+def pp_list_broker_feeds(username):
+    account_id, err = _get_account_id(username=username)
+    if err:
+        return err
+    return jsonify(list_broker_feeds(account_id)), 200
+
+
+@app.route('/api/broker/request-auth', methods=['POST'])
+@token_required
+def pp_request_broker_auth(username):
+    data    = request.get_json() or {}
+    broker  = data.get('broker',     '').strip()
+    account = data.get('account',    '').strip()
+    acc_id  = data.get('account_id')
+    name    = (data.get('name') or '').strip() or None
+    if not broker:
+        return jsonify({'error': 'Broker is required'}), 400
+    if not account:
+        return jsonify({'error': 'Account number is required'}), 400
+    if not acc_id:
+        return jsonify({'error': 'account_id is required'}), 400
+    if not user_has_account_access(username, acc_id):
+        return jsonify({'error': 'Access denied'}), 403
+    try:
+        entry = create_broker_setting(username, acc_id, broker, account, name)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    return jsonify({'ok': True, 'setting': entry}), 201
+
+
+@app.route('/api/portfolios/tracked', methods=['GET'])
+@token_required
+def pp_list_tracked_portfolios(username):
+    account_id, err = _get_account_id(username=username)
+    if err:
+        return err
+    return jsonify(list_tracked_portfolios(account_id)), 200
+
+
+@app.route('/api/portfolios/adhoc', methods=['GET'])
+@token_required
+def pp_list_adhoc_portfolios(username):
+    return jsonify(list_adhoc_portfolios(username)), 200
+
+
+@app.route('/api/position-history', methods=['GET'])
+@token_required
+def pp_position_history(username):
+    account_id, err = _get_account_id(username=username)
+    if err:
+        return err
+    return jsonify(list_position_history(account_id)), 200
+
+
+# ── What-If Analysis ──────────────────────────────────────────────────────────
+
+@app.route('/api/whatif/portfolios', methods=['GET'])
+@token_required
+def whatif_portfolios(username):
+    try:
+        account_id = request.args.get('account_id', type=int)
+        return jsonify(get_whatif_portfolios(username, account_id)), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/whatif/portfolio/<int:port_id>/allocations', methods=['GET'])
+@token_required
+def whatif_allocations(username, port_id):
+    return jsonify(get_whatif_allocations(port_id)), 200
+
+
+@app.route('/api/whatif/portfolio/<int:port_id>/alternatives', methods=['GET'])
+@token_required
+def whatif_alternatives_route(username, port_id):
+    return jsonify(get_whatif_alternatives(port_id)), 200
+
+
+@app.route('/api/whatif/portfolio/<int:port_id>/metrics', methods=['POST'])
+@token_required
+def whatif_metrics_route(username, port_id):
+    body = request.get_json(silent=True) or {}
+    weights = body.get('weights', {})
+    if not weights:
+        return jsonify({'error': 'weights required'}), 400
+    try:
+        return jsonify(post_whatif_metrics(port_id, weights)), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500

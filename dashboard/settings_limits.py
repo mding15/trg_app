@@ -6,6 +6,11 @@ _CONC_KEYS = [
     "con_limit_currency_pct",
     "con_limit_industry_pct",
     "con_limit_name_pct",
+    "var_con_asset_pct",
+    "var_con_region_pct",
+    "var_con_currency_pct",
+    "var_con_industry_pct",
+    "var_con_name_pct",
 ]
 
 _RISK_KEYS = [
@@ -14,7 +19,20 @@ _RISK_KEYS = [
     "vol_limit_pct",
 ]
 
-ALL_KEYS = _CONC_KEYS + _RISK_KEYS
+_ALLOC_KEYS = [
+    "alloc_equity_pct",
+    "alloc_fixedincome_pct",
+    "alloc_alternative_pct",
+    "alloc_multiasset_pct",
+    "alloc_cash_pct",
+    "var_alloc_equity_pct",
+    "var_alloc_fixedincome_pct",
+    "var_alloc_alternative_pct",
+    "var_alloc_multiasset_pct",
+    "var_alloc_cash_pct",
+]
+
+ALL_KEYS = _CONC_KEYS + _RISK_KEYS + _ALLOC_KEYS
 
 
 def read_account_limits(account_id):
@@ -31,6 +49,7 @@ def read_account_limits(account_id):
     return {
         "concentration": {k: rows.get(k) for k in _CONC_KEYS},
         "risk":          {k: rows.get(k) for k in _RISK_KEYS},
+        "alloc":         {k: rows.get(k) for k in _ALLOC_KEYS},
     }
 
 
@@ -40,7 +59,7 @@ def write_account_limits(account_id, values):
     values: {concentration: {key: val, ...}, risk: {key: val, ...}}
     """
     flat = {}
-    for section in ("concentration", "risk"):
+    for section in ("concentration", "risk", "alloc"):
         flat.update(values.get(section) or {})
 
     with pg_connection() as conn:

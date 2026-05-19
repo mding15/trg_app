@@ -16,6 +16,7 @@ Tables:
     benchmark            — shared benchmark library (shared and custom per-account benchmarks)
     benchmark_weights    — normalized asset class weights per benchmark (one row per asset class)
     account_benchmark    — maps one active benchmark to each account (UNIQUE on account_id)
+    illiquid_model_parameters — calibration parameters for illiquid securities (PE, private credit, etc.)
 """
 from __future__ import annotations
 
@@ -229,12 +230,47 @@ def create_tables() -> None:
             """)
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS broker_account (
-                    id SERIAL PRIMARY KEY,
-                    account_id INT NOT NULL,
-                    broker_account text NOT NULL,
-                    broker text NOT NULL,
-                    routing_code text NOT NULL,
-                    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+                    id             SERIAL PRIMARY KEY,
+                    account_id     INT  NOT NULL,
+                    broker_account TEXT NOT NULL,
+                    broker         TEXT NOT NULL,
+                    routing_code   TEXT NULL,
+                    name           TEXT NULL,
+                    setup_user_id  INT  NULL REFERENCES "user"(user_id),
+                    auth_expiry    DATE NULL,
+                    status         TEXT NOT NULL DEFAULT 'Pending',
+                    updated_at     TIMESTAMP NOT NULL DEFAULT NOW()
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS broker_feed_summary (
+                    id                SERIAL PRIMARY KEY,
+                    broker_account_id INT       NOT NULL REFERENCES broker_account(id),
+                    feed_date         DATE      NOT NULL,
+                    mv                NUMERIC   NULL,
+                    positions         INT       NULL,
+                    securities        INT       NULL,
+                    transactions      INT       NULL,
+                    tax_lots          INT       NULL,
+                    last_feed         TIMESTAMP NOT NULL DEFAULT NOW(),
+                    UNIQUE (broker_account_id, feed_date)
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS broker_account_hist (
+                    id                SERIAL PRIMARY KEY,
+                    broker_account_id INT       NOT NULL,
+                    account_id        INT       NOT NULL,
+                    broker_account    TEXT      NOT NULL,
+                    broker            TEXT      NOT NULL,
+                    routing_code      TEXT      NULL,
+                    name              TEXT      NULL,
+                    setup_user_id     INT       NULL,
+                    auth_expiry       DATE      NULL,
+                    status            TEXT      NOT NULL,
+                    updated_at        TIMESTAMP NOT NULL,
+                    deleted_by        TEXT      NULL,
+                    archived_at       TIMESTAMP NOT NULL DEFAULT NOW()
                 )
             """)
 
@@ -479,6 +515,18 @@ def create_tables() -> None:
                     end_date     DATE,
                     calc_date    DATE,
                     PRIMARY KEY (security_id, beta_key)
+                )
+            """)
+
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS illiquid_model_parameters (
+                    security_id    VARCHAR(20) PRIMARY KEY,
+                    category       VARCHAR(50) NULL,
+                    historical_vol NUMERIC     NULL,
+                    liquidity_adj  NUMERIC     NULL,
+                    correlation    NUMERIC     NULL,
+                    beta           NUMERIC     NULL,
+                    sigma          NUMERIC     NULL
                 )
             """)
 

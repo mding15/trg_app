@@ -11,6 +11,10 @@ Slices and their dimension mapping:
   region   — region (L1) › class (L2, leaf)
   industry — sector (L1) › ticker (L2, leaf)
   currency — currency (L1) › class (L2, leaf)
+
+Public helpers also used by whatif.py:
+  _fetch_flat_port(conn, port_id)     — fetch flat DF from port_position_var
+  build_alloc_slices(df, slice_keys)  — build {slice_key: levels_dict} for multiple slices
 """
 from __future__ import annotations
 
@@ -33,6 +37,35 @@ def _latest_as_of_date(conn, account_id: int):
         )
         row = cur.fetchone()
     return row[0] if row and row[0] is not None else None
+
+
+def _fetch_flat_port(conn, port_id: int) -> pd.DataFrame:
+    """Return one row per position from port_position_var (ad-hoc uploaded portfolios)."""
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            """
+            SELECT
+                COALESCE(ticker,        security_id, '(unnamed)')  AS ticker,
+                COALESCE(class,         '(unclassified)')          AS asset_class,
+                COALESCE(sc1,           '(unclassified)')          AS sc1,
+                COALESCE(region,        '(unknown)')               AS region,
+                COALESCE(country,       '(unknown)')               AS country,
+                COALESCE(sector,        '(unknown)')               AS sector,
+                COALESCE(currency,      '(unknown)')               AS currency,
+                COALESCE(market_value,  0)                         AS market_value,
+                COALESCE(marginal_tvar, 0)                         AS marginal_tvar
+            FROM port_position_var
+            WHERE port_id = %s
+            """,
+            (port_id,),
+        )
+        rows = cur.fetchall()
+    if not rows:
+        return pd.DataFrame()
+    df = pd.DataFrame(rows)
+    df['market_value']  = pd.to_numeric(df['market_value'],  errors='coerce').fillna(0.0)
+    df['marginal_tvar'] = pd.to_numeric(df['marginal_tvar'], errors='coerce').fillna(0.0)
+    return df
 
 
 def _fetch_flat(conn, account_id: int, as_of_date) -> pd.DataFrame:
@@ -290,6 +323,75 @@ def _build_slice(
 
 # ── Public API ────────────────────────────────────────────────────────────────
 
+def _apply_slice(df: pd.DataFrame, slice_key: str) -> dict:
+    """Build levels + holdings for one slice from a pre-fetched DataFrame."""
+    if slice_key == "asset":
+        return _build_slice(
+            df, "asset_class", "sc1", "ticker",
+            slice_name="asset",
+            l1_subtitle="Asset class · click to drill down",
+            l2_subtitle_tmpl="{dim1_val} — sub-classes · click to drill down",
+            l3_subtitle_tmpl="{dim1_val} · {dim2_val} — securities",
+            holdings_col1="Asset class",
+            holdings_col2="Sub-class",
+        )
+
+    if slice_key == "broker":
+        return _build_slice(
+            df, "broker", "asset_class", "sc1",
+            slice_name="broker",
+            l1_subtitle="Broker · click to drill down",
+            l2_subtitle_tmpl="{dim1_val} — by asset class",
+            l3_subtitle_tmpl="{dim1_val} · {dim2_val} — sub-classes",
+            holdings_col1="Broker",
+            holdings_col2="Asset class",
+            holdings_col3="Sub-class",
+            dim4="ticker",
+            l4_subtitle_tmpl="{dim1_val} · {dim2_val} · {dim3_val} — securities",
+        )
+
+    if slice_key == "region":
+        return _build_slice(
+            df, "region", "country", "ticker",
+            slice_name="region",
+            l1_subtitle="Region · click to drill down",
+            l2_subtitle_tmpl="{dim1_val} — by country",
+            l3_subtitle_tmpl="{dim1_val} · {dim2_val} — securities",
+            holdings_col1="Region",
+            holdings_col2="Country",
+        )
+
+    if slice_key == "industry":
+        return _build_slice(
+            df, "sector", "ticker", None,
+            slice_name="industry",
+            l1_subtitle="Sector · click to drill down",
+            l2_subtitle_tmpl="{dim1_val} — securities",
+            l3_subtitle_tmpl=None,
+            holdings_col1="Sector",
+            holdings_col2="Security",
+        )
+
+    # slice_key == "currency"
+    return _build_slice(
+        df, "currency", "asset_class", "ticker",
+        slice_name="currency",
+        l1_subtitle="Currency · click to drill down",
+        l2_subtitle_tmpl="{dim1_val} — by asset class",
+        l3_subtitle_tmpl="{dim1_val} · {dim2_val} — securities",
+        holdings_col1="Currency",
+        holdings_col2="Asset class",
+    )
+
+
+def build_alloc_slices(df: pd.DataFrame, slice_keys: list) -> dict:
+    """
+    Build {slice_key: levels_dict} for multiple slices from a pre-fetched DataFrame.
+    Used by whatif.py to build all allocation charts in one DB fetch.
+    """
+    return {key: _apply_slice(df, key)["levels"] for key in slice_keys}
+
+
 def get_portfolio_allocation(account_id: int, slice_key: str, as_of_date=None) -> dict:
     """
     Return allocation drill-down data for one slice.
@@ -308,60 +410,4 @@ def get_portfolio_allocation(account_id: int, slice_key: str, as_of_date=None) -
     if df.empty:
         return {}
 
-    if slice_key == "asset":
-        return _build_slice(
-            df, "asset_class", "sc1", "ticker",
-            slice_name="asset",
-            l1_subtitle="Asset class \u00b7 click to drill down",
-            l2_subtitle_tmpl="{dim1_val} \u2014 sub-classes \u00b7 click to drill down",
-            l3_subtitle_tmpl="{dim1_val} \u00b7 {dim2_val} \u2014 securities",
-            holdings_col1="Asset class",
-            holdings_col2="Sub-class",
-        )
-
-    if slice_key == "broker":
-        return _build_slice(
-            df, "broker", "asset_class", "sc1",
-            slice_name="broker",
-            l1_subtitle="Broker \u00b7 click to drill down",
-            l2_subtitle_tmpl="{dim1_val} \u2014 by asset class",
-            l3_subtitle_tmpl="{dim1_val} \u00b7 {dim2_val} \u2014 sub-classes",
-            holdings_col1="Broker",
-            holdings_col2="Asset class",
-            holdings_col3="Sub-class",
-            dim4="ticker",
-            l4_subtitle_tmpl="{dim1_val} \u00b7 {dim2_val} \u00b7 {dim3_val} \u2014 securities",
-        )
-
-    if slice_key == "region":
-        return _build_slice(
-            df, "region", "country", "ticker",
-            slice_name="region",
-            l1_subtitle="Region \u00b7 click to drill down",
-            l2_subtitle_tmpl="{dim1_val} \u2014 by country",
-            l3_subtitle_tmpl="{dim1_val} \u00b7 {dim2_val} \u2014 securities",
-            holdings_col1="Region",
-            holdings_col2="Country",
-        )
-
-    if slice_key == "industry":
-        return _build_slice(
-            df, "sector", "ticker", None,
-            slice_name="industry",
-            l1_subtitle="Sector \u00b7 click to drill down",
-            l2_subtitle_tmpl="{dim1_val} \u2014 securities",
-            l3_subtitle_tmpl=None,
-            holdings_col1="Sector",
-            holdings_col2="Security",
-        )
-
-    # slice_key == "currency"
-    return _build_slice(
-        df, "currency", "asset_class", "ticker",
-        slice_name="currency",
-        l1_subtitle="Currency \u00b7 click to drill down",
-        l2_subtitle_tmpl="{dim1_val} \u2014 by asset class",
-        l3_subtitle_tmpl="{dim1_val} \u00b7 {dim2_val} \u2014 securities",
-        holdings_col1="Currency",
-        holdings_col2="Asset class",
-    )
+    return _apply_slice(df, slice_key)

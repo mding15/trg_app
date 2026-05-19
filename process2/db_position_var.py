@@ -156,6 +156,8 @@ def insert_results(results: pd.DataFrame, as_of_date) -> int:
         'ir_pv01', 'sp_pv01', 'spread_duration', 'spread_convexity',
         'delta_var', 'ir_var', 'spread_var', 'gamma_var',
         'std', 'marginal_std', 'var', 'tvar', 'marginal_var', 'marginal_tvar',
+        'mg_std', 'var_95', 'var_99', 'es_95', 'es_99',
+        'mg_var_95', 'mg_var_99', 'mg_es_95', 'mg_es_99',
         'beta',
     }
 
@@ -176,12 +178,27 @@ def insert_results(results: pd.DataFrame, as_of_date) -> int:
         'ir_pv01', 'sp_pv01', 'spread_duration', 'spread_convexity',
         'delta_var', 'ir_var', 'spread_var', 'gamma_var',
         'std', 'marginal_std', 'var', 'tvar', 'marginal_var', 'marginal_tvar',
+        'mg_std', 'var_95', 'var_99', 'es_95', 'es_99',
+        'mg_var_95', 'mg_var_99', 'mg_es_95', 'mg_es_99',
         'beta',
     ]
+
+    # Columns populated by the new engine that should also fill the legacy columns
+    _LEGACY_FILL = {
+        'mg_std':    'marginal_std',
+        'var_95':    'var',
+        'es_95':     'tvar',
+        'mg_var_95': 'marginal_var',
+        'mg_es_95':  'marginal_tvar',
+    }
 
     df = results.copy()
     df['as_of_date'] = pd.to_datetime(as_of_date).date()
     df = df.rename(columns=_ENGINE_TO_DB)
+
+    for new_col, old_col in _LEGACY_FILL.items():
+        if new_col in df.columns and old_col not in df.columns:
+            df[old_col] = df[new_col]
 
     for col in _NUMERIC_COLS:
         if col in df.columns:
