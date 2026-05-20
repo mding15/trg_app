@@ -10,9 +10,9 @@ Steps:
          position_id  = port_positions.ID
          asset_class  = port_positions.Class
          feed_source  = 'file_upload'
-    6. Update last_price / last_price_date from current_price WHERE Date = as_of_date.
-       Securities with no current_price entry get an implied price (MarketValue / Quantity)
-       and last_price_date = NULL.
+    6. Update last_price / last_price_date: bond_price (latest on/before as_of_date, for
+       securities where security_info.AssetType IN ('Bond','Treasury')) wins over
+       current_price (exact date). Fallback: implied price (MarketValue / Quantity).
     7. Recalculate market_value = quantity x last_price.
     8. Archive older rows to proc_positions_hist, delete same-date rows (feed_source='file_upload').
     9. Insert into proc_positions.
@@ -107,7 +107,8 @@ def _load_positions(cur, port_ids: list[int]) -> list[dict]:
     cur.execute(
         """
         SELECT port_id, "ID", "SecurityID", "SecurityName", "ISIN", "CUSIP",
-               "Ticker", "Quantity", "MarketValue", "userAssetClass", "userCurrency"
+               "Ticker", "Quantity", "MarketValue", "userAssetClass", "userCurrency",
+               total_cost
         FROM port_positions
         WHERE port_id = ANY(%s)
         """,
@@ -133,6 +134,33 @@ def _load_price_cache(cur, security_ids: list[str], as_of_date) -> dict[str, tup
         (as_of_date, security_ids),
     )
     return {row[0]: (row[1], row[2]) for row in cur.fetchall()}
+
+
+def _load_bond_price_cache(cur, security_ids: list[str], as_of_date) -> dict[str, tuple]:
+    """
+    Fetch latest bond prices from bond_price for securities where
+    security_info.AssetType IN ('Bond', 'Treasury').
+    Uses the most recent price on or before as_of_date.
+    Returns {SecurityID: (price/100, price_date)} — price divided by 100 (par-relative).
+    """
+    if not security_ids:
+        return {}
+    cur.execute(
+        'SELECT "SecurityID" FROM security_info '
+        'WHERE "SecurityID" = ANY(%s) AND "AssetType" IN (%s, %s)',
+        (security_ids, 'Bond', 'Treasury'),
+    )
+    bond_ids = [r[0] for r in cur.fetchall()]
+    if not bond_ids:
+        return {}
+    cur.execute(
+        'SELECT DISTINCT ON (security_id) security_id, price, price_date '
+        'FROM bond_price '
+        'WHERE security_id = ANY(%s) AND price_date <= %s '
+        'ORDER BY security_id, price_date DESC',
+        (bond_ids, as_of_date),
+    )
+    return {row[0]: (row[1] / 100, row[2]) for row in cur.fetchall()}
 
 
 # ── archive helper (scoped to FEED_SOURCE) ────────────────────────────────────
@@ -228,18 +256,23 @@ def process_tracked_positions(as_of_date, account_id=None, dry_run=False) -> int
                 return 0
             logger.info(f"Fetched {len(raw_positions)} rows from port_positions")
 
-            # ── Step 6: batch-load prices from current_price ──────────────────────
+            # ── Step 6: batch-load prices from current_price and bond_price ─────
             sec_ids = list({r['SecurityID'] for r in raw_positions if r.get('SecurityID')})
-            price_cache = _load_price_cache(cur, sec_ids, as_of_date)
+            price_cache      = _load_price_cache(cur, sec_ids, as_of_date)
+            bond_price_cache = _load_bond_price_cache(cur, sec_ids, as_of_date)
             logger.info(
                 f"Loaded {len(price_cache)} price entries from current_price for {as_of_date}"
+            )
+            logger.info(
+                f"Loaded {len(bond_price_cache)} price entries from bond_price for {as_of_date}"
             )
 
         # ── Steps 5+6+7: map columns, apply prices, recalculate market_value ──────
         processed: list[dict] = []
-        priced_count   = 0
-        implied_count  = 0
-        no_price_count = 0
+        bond_priced_count = 0
+        priced_count      = 0
+        implied_count     = 0
+        no_price_count    = 0
 
         for r in raw_positions:
             acct_id     = port_id_to_account[r['port_id']]
@@ -247,9 +280,14 @@ def process_tracked_positions(as_of_date, account_id=None, dry_run=False) -> int
             quantity    = r.get('Quantity')
             orig_mv     = r.get('MarketValue')
 
-            # Resolve price from current_price, then implied, then None
+            # Resolve price: bond_price (wins) → current_price → implied → None
+            bond_entry  = bond_price_cache.get(security_id)
             price_entry = price_cache.get(security_id)
-            if price_entry:
+            if bond_entry:
+                last_price      = bond_entry[0]
+                last_price_date = bond_entry[1]
+                bond_priced_count += 1
+            elif price_entry:
                 last_price      = price_entry[0]
                 last_price_date = price_entry[1]
                 priced_count += 1
@@ -286,9 +324,10 @@ def process_tracked_positions(as_of_date, account_id=None, dry_run=False) -> int
                 'last_price':      last_price,
                 'last_price_date': last_price_date,
                 'feed_source':     FEED_SOURCE,
-                'total_cost':      None,
+                'total_cost':      r.get('total_cost'),
             })
 
+        logger.info(f"Priced from bond_price    : {bond_priced_count}")
         logger.info(f"Priced from current_price : {priced_count}")
         logger.info(f"Implied price (MV / Qty)  : {implied_count}")
         logger.info(f"No price available        : {no_price_count}")

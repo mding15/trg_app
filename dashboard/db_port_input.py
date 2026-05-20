@@ -37,13 +37,13 @@ _POSITIONS_TABLE_COLS = [
     'pos_id', 'SecurityID', 'SecurityName', 'ISIN', 'CUSIP', 'Ticker',
     'Quantity', 'MarketValue', 'userCurrency', 'userAssetClass', 'ExpectedReturn',
     'OptionType', 'PaymentFrequency', 'MaturityDate', 'OptionStrike',
-    'UnderlyingSecurityID', 'CouponRate',
+    'UnderlyingSecurityID', 'CouponRate', 'total_cost',
 ]
 
 # DataFrame column name → DB column name where they differ.
 _COL_TO_DB = {'pos_id': 'ID'}
 
-_NUMERIC_COLS = {'Quantity', 'MarketValue', 'ExpectedReturn', 'OptionStrike', 'CouponRate'}
+_NUMERIC_COLS = {'Quantity', 'MarketValue', 'ExpectedReturn', 'OptionStrike', 'CouponRate', 'total_cost'}
 _DATE_COLS    = {'MaturityDate'}
 _INT_COLS     = {'PaymentFrequency'}
 

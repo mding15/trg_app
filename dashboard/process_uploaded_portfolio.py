@@ -41,6 +41,7 @@ _TEMPLATE_TO_ENGINE = {
     'Cusip':        'CUSIP',
     'Market Value': 'MarketValue',
     'Asset Class':  'AssetClass',
+    'TotalCost':    'total_cost',
 }
 
 
@@ -54,8 +55,8 @@ def process_portfolio(file_path: Path, port_id: int) -> None:
     # Deferred to avoid circular imports: update_position_price → mkt_timeseries
     # → db_utils → api → routes → upload_portfolio → this module
     from preprocess import read_portfolio
-    from engine import VaR_engine
-    from process2.calculate_var import build_results, add_beta_to_result, fetch_betas_bulk
+    from process2 import var_engine
+    from process2.calculate_var import add_beta_to_result, fetch_betas_bulk
     from process2.security_lookup import lookup_security_ids
     from process2.update_security_info import update_security_info
     from process2.update_position_price import update_position_price
@@ -104,19 +105,17 @@ def process_portfolio(file_path: Path, port_id: int) -> None:
     logger.info(f'updated portfolio_info: market_value={mv}, as_of_date={asof_date} for port_id={port_id}')
 
     # ── 3. VaR engine ─────────────────────────────────────────────────────────
-    DATA = VaR_engine.calc_VaR(active, params)
-    if 'Error' in DATA:
-        raise Exception(DATA['Error'])
+    var_metrics = var_engine.calc_var(active)
 
-    # ── 4. Build results ──────────────────────────────────────────────────────
-    result = build_results(active, DATA)
+    # ── 4. Merge metrics back onto active positions ───────────────────────────
+    result = active.set_index('pos_id').join(var_metrics, how='left').reset_index()
 
     # ── 5. Re-attach excluded positions with NULL VaR columns ─────────────────
     if not excluded.empty:
-        excluded_out = excluded.reindex(columns=result.columns)
-        for col in [c for c in result.columns if c not in excluded.columns]:
-            excluded_out[col] = None
-        result = pd.concat([result, excluded_out], ignore_index=True)
+        excl = excluded.copy()
+        for col in var_metrics.columns:
+            excl[col] = None
+        result = pd.concat([result, excl], ignore_index=True)
 
     # ── 6. Add beta ───────────────────────────────────────────────────────────
     sec_ids    = result['SecurityID'].dropna().unique().tolist()

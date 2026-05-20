@@ -21,6 +21,7 @@ CREATE TABLE port_position_var (
     -- position
     quantity                 NUMERIC,
     market_value             NUMERIC,
+    total_cost               NUMERIC,
     currency                 TEXT,
     last_price               NUMERIC,
     last_price_date          DATE,

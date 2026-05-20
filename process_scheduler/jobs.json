@@ -34,7 +34,21 @@
     "script_path": "api/trgapp/process2/calc_bond_pnl.py",
     "script_type": "python",
     "schedule_time": null,
-    "dependencies": ["as_of_date"],
+    "dependencies": ["as_of_date", "pnl_treasury"],
+    "max_retries": 2,
+    "retry_delay_seconds": 60,
+    "enabled": true,
+    "venv_path": null
+  },
+
+  {
+    "id": "pnl_treasury",
+    "name": "Treasury PnL",
+    "description": "Calculates PnL for treasury products",
+    "script_path": "api/trgapp/process2/calc_treasury_pnl.py",
+    "script_type": "python",
+    "schedule_time": null,
+    "dependencies": ["as_of_date", "tr_extract"],
     "max_retries": 2,
     "retry_delay_seconds": 60,
     "enabled": true,
@@ -139,6 +153,20 @@
   },
 
   {
+    "id": "tr_extract",
+    "name": "Extract Treasury Yields",
+    "description": "Extract Treasury Yields from treasury.gov.",
+    "script_path": "api/trgapp/detl/tr_extract.py",
+    "script_type": "python",
+    "schedule_time": "21:00",
+    "dependencies": ["as_of_date"],
+    "max_retries": 2,
+    "retry_delay_seconds": 60,
+    "enabled": true,
+    "venv_path": null
+  },
+
+  {
     "id": "dashboard_process",
     "name": "Dashboard Process",
     "description": "Run daily dashboard computation process.",
@@ -187,7 +215,7 @@
     "script_path": "api/trgapp/process2/tracked_proc_positions.py",
     "script_type": "python",
     "schedule_time": null,
-    "dependencies": ["yh_eod_price"],
+    "dependencies": ["yh_eod_price", "tr_extract"],
     "max_retries": 2,
     "retry_delay_seconds": 60,
     "enabled": true,

@@ -84,6 +84,7 @@ def _get_bond_info(sec_ids: list) -> pd.DataFrame:
     df = pd.DataFrame(rows, columns=['SecurityID', 'MaturityDate', 'CouponRate', 'CouponType', 'PaymentFrequency'])
     df = df.drop_duplicates(subset='SecurityID', keep='first')
     df['PaymentFrequency'] = df['PaymentFrequency'].fillna(2).astype(int)
+    df['CouponRate'] = df['CouponRate'] / 100   # DB stores %, functions expect decimal
     return df
 
 

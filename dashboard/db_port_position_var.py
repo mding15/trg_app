@@ -71,7 +71,7 @@ _ENGINE_TO_DB = {
 }
 
 _NUMERIC_COLS = {
-    'quantity', 'market_value', 'last_price',
+    'quantity', 'market_value', 'last_price', 'total_cost',
     'expected_return', 'coupon_rate', 'option_strike', 'underlying_price',
     'risk_free_rate', 'tenor', 'delta', 'gamma', 'vega', 'iv',
     'ir_tenor', 'yield', 'duration', 'convexity',
@@ -87,7 +87,7 @@ _BOOL_COLS = {'is_option', 'excluded'}
 _TABLE_COLS = [
     'port_id', 'pos_id', 'as_of_date',
     'security_id', 'security_name', 'isin', 'cusip', 'ticker', 'broker_account',
-    'quantity', 'market_value', 'currency', 'last_price', 'last_price_date',
+    'quantity', 'market_value', 'total_cost', 'currency', 'last_price', 'last_price_date',
     'asset_class', 'asset_type', 'class', 'sc1', 'sc2',
     'country', 'region', 'sector', 'industry',
     'expected_return', 'coupon_rate', 'option_type', 'option_strike',

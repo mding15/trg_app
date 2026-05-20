@@ -171,7 +171,8 @@ CREATE TABLE public.port_positions (
 	"UnderlyingID" varchar(20) NULL,
 	unknown_security bool DEFAULT false NOT NULL,
 	asset_class varchar(50) NULL,
-	asset_type varchar(50) NULL
+	asset_type varchar(50) NULL,
+	total_cost numeric NULL
 );
 CREATE INDEX idx_port_positions_port_id ON public.port_positions USING btree (port_id);
 
@@ -256,6 +257,27 @@ CREATE TABLE public.modeled_security (
 	add_at timestamp DEFAULT now() NOT NULL,
 	CONSTRAINT modeled_security_pkey PRIMARY KEY ("SecurityID")
 );
+
+CREATE TABLE public.treasury_yield (
+	date         DATE        PRIMARY KEY,
+
+	bc_1month    NUMERIC,
+	bc_2month    NUMERIC,
+	bc_3month    NUMERIC,
+	bc_6month    NUMERIC,
+	bc_1year     NUMERIC,
+	bc_2year     NUMERIC,
+	bc_3year     NUMERIC,
+	bc_5year     NUMERIC,
+	bc_7year     NUMERIC,
+	bc_10year    NUMERIC,
+	bc_20year    NUMERIC,
+	bc_30year    NUMERIC,
+
+	insert_time  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+-- Populated by detl/tr_extract.py (run weekdays).
+-- Values in percentage points (e.g. 4.32 = 4.32%).
 
 CREATE TABLE public.current_security (
 	"SecurityID" varchar(20) NOT NULL,
