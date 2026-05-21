@@ -376,7 +376,317 @@ def save_portfolio_to_template(positions: pd.DataFrame, params: dict, limit: dic
 
 # ── Clone portfolio ───────────────────────────────────────────────────────────
 
+# DB column name → VaR engine column name (input-side only; VaR outputs are recomputed)
+_DB_TO_ENGINE = {
+    'security_id':            'SecurityID',
+    'security_name':          'SecurityName',
+    'isin':                   'ISIN',
+    'cusip':                  'CUSIP',
+    'ticker':                 'Ticker',
+    'quantity':               'Quantity',
+    'market_value':           'MarketValue',
+    'currency':               'Currency',
+    'last_price':             'LastPrice',
+    'last_price_date':        'LastPriceDate',
+    'asset_class':            'AssetClass',
+    'asset_type':             'AssetType',
+    'class':                  'Class',
+    'sc1':                    'SC1',
+    'sc2':                    'SC2',
+    'country':                'Country',
+    'region':                 'Region',
+    'sector':                 'Sector',
+    'industry':               'Industry',
+    'expected_return':        'ExpectedReturn',
+    'coupon_rate':            'CouponRate',
+    'option_type':            'OptionType',
+    'option_strike':          'OptionStrike',
+    'payment_frequency':      'PaymentFrequency',
+    'maturity_date':          'MaturityDate',
+    'underlying_security_id': 'UnderlyingSecurityID',
+    'underlying_id':          'UnderlyingID',
+    'underlying_price':       'UnderlyingPrice',
+    'risk_free_rate':         'RiskFreeRate',
+    'tenor':                  'Tenor',
+    'delta':                  'DELTA',
+    'gamma':                  'GAMMA',
+    'vega':                   'VEGA',
+    'iv':                     'IV',
+    'ir_tenor':               'IR_Tenor',
+    'yield':                  'Yield',
+    'duration':               'Duration',
+    'convexity':              'Convexity',
+    'ir_pv01':                'IR_PV01',
+    'sp_pv01':                'SP_PV01',
+    'spread_duration':        'SpreadDuration',
+    'spread_convexity':       'SpreadConvexity',
+    'delta_var':              'DELTA VaR',
+    'ir_var':                 'IR VaR',
+    'spread_var':             'SPREAD VaR',
+    'gamma_var':              'GAMMA VaR',
+    'total_cost':             'total_cost',
+    'is_option':              'is_option',
+    'broker_account':         'BrokerAccount',
+}
+
+# Non-VaR columns present in both port_position_var and position_var
+_CLONE_POSITION_COLS = """
+    pos_id, as_of_date,
+    security_id, security_name, isin, cusip, ticker,
+    quantity, market_value, total_cost, currency, last_price, last_price_date,
+    asset_class, asset_type, "class", sc1, sc2,
+    country, region, sector, industry,
+    expected_return, coupon_rate, option_type, option_strike,
+    payment_frequency, maturity_date, underlying_security_id, underlying_id,
+    underlying_price, is_option, excluded, exclude_reason,
+    risk_free_rate, tenor, delta, gamma, vega, iv,
+    ir_tenor, "yield", duration, convexity,
+    ir_pv01, sp_pv01, spread_duration, spread_convexity,
+    delta_var, ir_var, spread_var, gamma_var
+"""
+
+
+_CLONE_NUMERIC_DB_COLS = frozenset({
+    'quantity', 'market_value', 'total_cost', 'last_price',
+    'expected_return', 'coupon_rate', 'option_strike', 'underlying_price',
+    'risk_free_rate', 'tenor', 'delta', 'gamma', 'vega', 'iv',
+    'ir_tenor', 'yield', 'duration', 'convexity',
+    'ir_pv01', 'sp_pv01', 'spread_duration', 'spread_convexity',
+    'delta_var', 'ir_var', 'spread_var', 'gamma_var',
+})
+
+
+def _fetch_clone_positions(sql: str, params: tuple) -> tuple[pd.DataFrame, object]:
+    """Execute sql, rename DB columns to engine convention, and return (df, asof_date)."""
+    with pg_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql, params)
+            rows = cur.fetchall()
+            cols = [d[0] for d in cur.description]
+    if not rows:
+        return pd.DataFrame(), None
+    df   = pd.DataFrame(rows, columns=cols)
+    asof = df['as_of_date'].iloc[0]
+    # Convert psycopg2 Decimal → float before rename so arithmetic works downstream
+    for col in _CLONE_NUMERIC_DB_COLS:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+    df   = df.drop(columns=['as_of_date']).rename(columns=_DB_TO_ENGINE)
+    df['SecurityID'] = df['SecurityID'].apply(
+        lambda x: None if (x is None or (isinstance(x, float) and pd.isna(x)))
+                  else (str(int(x)) if isinstance(x, float) else str(x))
+    )
+    return df, asof
+
+
+def _build_positions_from_adhoc(src_port_id: int) -> tuple:
+    """Read enriched positions + params from port_position_var / port_parameters."""
+    sql = f'SELECT {_CLONE_POSITION_COLS} FROM port_position_var WHERE port_id = %s ORDER BY pos_id'
+    positions, asof_date = _fetch_clone_positions(sql, (src_port_id,))
+    if positions.empty:
+        raise Exception(f'no positions in port_position_var for port_id={src_port_id}')
+
+    with pg_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                'SELECT "PortfolioName", "AsofDate", "ReportDate", "RiskHorizon", "TailMeasure", '
+                '"ReturnFrequency", "Benchmark", "ExpectedReturn", "BaseCurrency" '
+                'FROM port_parameters WHERE port_id = %s',
+                (src_port_id,),
+            )
+            row = cur.fetchone()
+
+    if row:
+        params = dict(zip(
+            ['PortfolioName', 'AsofDate', 'ReportDate', 'RiskHorizon', 'TailMeasure',
+             'ReturnFrequency', 'Benchmark', 'ExpectedReturn', 'BaseCurrency'],
+            row,
+        ))
+    else:
+        params = {'AsofDate': asof_date, 'ReportDate': asof_date}
+
+    return positions, params, asof_date
+
+
+def _build_positions_from_tracked(account_id: int) -> tuple:
+    """Read latest enriched positions + params from position_var / account_parameters."""
+    sql = f"""
+        SELECT {_CLONE_POSITION_COLS}
+        FROM position_var
+        WHERE account_id = %s
+          AND as_of_date = (SELECT MAX(as_of_date) FROM position_var WHERE account_id = %s)
+        ORDER BY pos_id
+    """
+    positions, asof_date = _fetch_clone_positions(sql, (account_id, account_id))
+    if positions.empty:
+        raise Exception(f'no positions in position_var for account_id={account_id}')
+
+    with pg_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                'SELECT risk_horizon, risk_measure, base_currency, benchmark, exp_return '
+                'FROM account_parameters WHERE account_id = %s ORDER BY updated_at DESC LIMIT 1',
+                (account_id,),
+            )
+            row = cur.fetchone()
+
+    db_p = dict(zip(
+        ['risk_horizon', 'risk_measure', 'base_currency', 'benchmark', 'exp_return'],
+        row,
+    )) if row else {}
+    params = {
+        'AsofDate':        asof_date,
+        'ReportDate':      asof_date,
+        'RiskHorizon':     db_p.get('risk_horizon'),
+        'TailMeasure':     db_p.get('risk_measure'),
+        'ReturnFrequency': 'Daily',
+        'Benchmark':       db_p.get('benchmark'),
+        'ExpectedReturn':  db_p.get('exp_return'),
+        'BaseCurrency':    db_p.get('base_currency'),
+    }
+
+    return positions, params, asof_date
+
+
+def _run_var_on_positions(positions: pd.DataFrame, port_id: int, asof_date, port_name: str) -> None:
+    """Run VaR pipeline steps 3-7 on pre-enriched positions and write to port_position_var."""
+    from process2 import var_engine
+    from process2.calculate_var import add_beta_to_result, fetch_betas_bulk
+
+    if 'excluded' in positions.columns:
+        active   = positions[positions['excluded'] != True].reset_index(drop=True)
+        excluded = positions[positions['excluded'] == True].reset_index(drop=True)
+    else:
+        active   = positions.copy()
+        excluded = pd.DataFrame(columns=positions.columns)
+    logger.info(f'[{port_name}] VaR split: {len(active)} active, {len(excluded)} excluded')
+
+    var_metrics = var_engine.calc_var(active)
+    result      = active.set_index('pos_id').join(var_metrics, how='left').reset_index()
+
+    if not excluded.empty:
+        excl = excluded.copy()
+        for col in var_metrics.columns:
+            excl[col] = None
+        result = pd.concat([result, excl], ignore_index=True)
+
+    sec_ids    = result['SecurityID'].dropna().unique().tolist()
+    betas_bulk = fetch_betas_bulk(['SP500_1Y'], sec_ids)
+    betas      = betas_bulk.get('SP500_1Y', {})
+    result     = add_beta_to_result(result, betas, logger)
+
+    n = insert_port_position_var(result, port_id, asof_date)
+    logger.info(f'[{port_name}] inserted {n} rows into port_position_var')
+
+
+def _clone_in_background(port_id: int, port_name: str,
+                          positions: pd.DataFrame, params: dict, asof_date) -> None:
+    from api import app
+    from dashboard.db_port_input import insert_port_parameters, insert_port_positions
+
+    _update_portfolio_status(port_id, 'Processing')
+    try:
+        with app.app_context():
+            insert_port_parameters({**params, 'PortfolioName': port_name}, port_id)
+            n_pos = insert_port_positions(positions, port_id)
+            logger.info(f'[{port_name}] inserted params and {n_pos} positions for port_id={port_id}')
+
+            mv = float(pd.to_numeric(positions['MarketValue'], errors='coerce').sum()) \
+                 if 'MarketValue' in positions.columns else None
+            with pg_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        'UPDATE portfolio_info SET market_value = %s, as_of_date = %s WHERE port_id = %s',
+                        (mv, asof_date, port_id),
+                    )
+                conn.commit()
+
+            _run_var_on_positions(positions, port_id, asof_date, port_name)
+        _update_portfolio_status(port_id, 'Success')
+    except Exception as e:
+        logger.error(f'clone_portfolio failed for port_id={port_id}: {e}')
+        _update_portfolio_status(port_id, 'Error', str(e))
+
+
 def clone_portfolio(port_id: int, new_port_name: str, username: str,
+                    target_weights: dict | None = None, background: bool = True) -> int:
+    """Clone a portfolio under a new name, reading directly from the database.
+
+    For adhoc sources (account_id is None): reads from port_position_var + port_parameters.
+    For tracked sources: reads from position_var + account_parameters.
+    target_weights: {key: pct} e.g. {'fi': 40, 'eq': 35} — scales Quantity/MarketValue so
+    the cloned portfolio matches the requested allocation percentages.
+    Returns the new port_id.
+    """
+    # Step 1: Fetch source portfolio_info
+    with pg_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                'SELECT account_id, client_id FROM portfolio_info WHERE port_id = %s',
+                (port_id,),
+            )
+            row = cur.fetchone()
+    if not row:
+        raise Exception(f'portfolio not found: port_id={port_id}')
+    src_account_id, _src_client_id = row
+
+    # Step 2: Resolve caller's client_id and new filename
+    with pg_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute('SELECT client_id FROM "user" WHERE username = %s', (username,))
+            row = cur.fetchone()
+    if not row:
+        raise Exception(f'user not found: {username}')
+    client_id    = row[0]
+    new_filename = f'{new_port_name}.xlsx'
+
+    # Step 3: Build positions + params from DB
+    if src_account_id is None:
+        positions, params, asof_date = _build_positions_from_adhoc(port_id)
+    else:
+        positions, params, asof_date = _build_positions_from_tracked(src_account_id)
+    positions = positions.copy()
+
+    # Step 4: Apply target weights (scale Quantity and MarketValue by AssetClass)
+    if target_weights and 'AssetClass' in positions.columns and 'MarketValue' in positions.columns:
+        mv_total = pd.to_numeric(positions['MarketValue'], errors='coerce').sum()
+        if mv_total > 0:
+            for key, target_pct in target_weights.items():
+                class_name = _WEIGHT_KEY_TO_CLASS.get(key)
+                if not class_name:
+                    continue
+                mask       = positions['AssetClass'] == class_name
+                current_mv = pd.to_numeric(positions.loc[mask, 'MarketValue'], errors='coerce').sum()
+                if current_mv > 0:
+                    factor = (target_pct / 100 * mv_total) / current_mv
+                    positions.loc[mask, 'Quantity']    = positions.loc[mask, 'Quantity']    * factor
+                    positions.loc[mask, 'MarketValue'] = positions.loc[mask, 'MarketValue'] * factor
+
+    # Step 5: Generate Excel file (write-only, for download)
+    template_positions = positions.rename(columns={
+        'pos_id': 'ID', 'CUSIP': 'Cusip',
+        'MarketValue': 'Market Value', 'AssetClass': 'Asset Class',
+    })
+    new_file_path = save_portfolio_to_template(template_positions, params, {}, client_id, new_filename)
+
+    # Step 6: Insert portfolio_info
+    new_port_id, _ = _insert_portfolio(username, new_port_name, new_file_path.name, port_type='adhoc')
+    logger.info(f'cloned port_id={port_id} -> new port_id={new_port_id} ({new_port_name})')
+
+    # Step 7: Insert DB records and run VaR pipeline
+    if background:
+        threading.Thread(
+            target=_clone_in_background,
+            args=(new_port_id, new_port_name, positions, params, asof_date),
+            daemon=True,
+        ).start()
+    else:
+        _clone_in_background(new_port_id, new_port_name, positions, params, asof_date)
+
+    return new_port_id
+
+
+def clone_portfolio_old(port_id: int, new_port_name: str, username: str,
                     target_weights: dict | None = None, background: bool = True) -> int:
     """Clone a portfolio under a new name, optionally targeting new asset class weights.
 
@@ -437,7 +747,7 @@ def clone_portfolio(port_id: int, new_port_name: str, username: str,
     new_file_path = save_portfolio_to_template(positions, params, limit, client_id, new_filename)
 
     # ── 4. Insert portfolio_info row ──────────────────────────────────────────
-    new_port_id, _ = _insert_portfolio(username, new_port_name, new_file_path.name)
+    new_port_id, _ = _insert_portfolio(username, new_port_name, new_file_path.name, port_type='adhoc')
     logger.info(f'cloned port_id={port_id} -> new port_id={new_port_id} ({new_port_name})')
 
     # ── 5. Kick off processing ────────────────────────────────────────────────
@@ -454,3 +764,27 @@ def clone_portfolio(port_id: int, new_port_name: str, username: str,
 
 
 # ── Test ──────────────────────────────────────────────────────────────────────
+
+def test_clone(port_id: int = 5359,
+               new_port_name: str = 'TEST_CLONE_5359',
+               username: str = 'test1@trg.com') -> None:
+
+    target_weights = {
+        'fi': 40,
+        'eq': 35,
+        'alt': 15,
+        'ma': 5,
+        'mm': 5,
+    }
+    clone_portfolio(port_id, new_port_name, username,
+                    target_weights, background = False)
+
+if __name__ == '__main__':
+    import argparse
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)-8s %(message)s')
+    parser = argparse.ArgumentParser(description='Test clone_portfolio step by step.')
+    parser.add_argument('--port-id',       type=int, default=5359,               metavar='PORT_ID')
+    parser.add_argument('--name',          type=str, default='TEST_CLONE_5359',  metavar='NAME')
+    parser.add_argument('--username',      type=str, default='test1@trg.com',    metavar='USER')
+    args = parser.parse_args()
+    test_clone(port_id=args.port_id, new_port_name=args.name, username=args.username)

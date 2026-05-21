@@ -62,12 +62,11 @@ _ENGINE_TO_DB = {
     'IR VaR':               'ir_var',
     'SPREAD VaR':           'spread_var',
     'GAMMA VaR':            'gamma_var',
-    'STD':                  'std',
-    'Marginal_STD':         'marginal_std',
-    'VaR':                  'var',
-    'tVaR':                 'tvar',
-    'Marginal_VaR':         'marginal_var',
-    'Marginal_tVaR':        'marginal_tvar',
+    'mg_std':               'marginal_std',
+    'var_95':               'var',
+    'es_95':                'tvar',
+    'mg_var_95':            'marginal_var',
+    'mg_es_95':             'marginal_tvar',
 }
 
 _NUMERIC_COLS = {
