@@ -34,6 +34,7 @@ from datetime import datetime
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from database2 import pg_connection, get_proc_asof_date
+from security_utils import create_security, add_xref_if_missing
 
 
 # ── logging setup ──────────────────────────────────────────────────────────────
@@ -178,62 +179,6 @@ def _load_security_cache(cur, raw_rows: list[dict]) -> dict[tuple, str]:
     return cache
 
 
-# ── security creation ──────────────────────────────────────────────────────────
-
-def _create_security(
-    cur,
-    security_name: str,
-    currency: str,
-    security_code: str,
-    asset_class_map: dict[str, str],
-    logger: logging.Logger,
-) -> str:
-    """Insert a new row into security_info and return the generated SecurityID.
-    Maps security_code → asset_class via asset_class_map; NULL if not found."""
-    asset_class = asset_class_map.get(security_code)
-    if asset_class is None and security_code:
-        logger.warning(
-            f"security_code '{security_code}' not found in broker_asset_class_map "
-            f"(broker='MSSB') — AssetClass set to NULL in security_info"
-        )
-    cur.execute(
-        """
-        INSERT INTO security_info
-            ("SecurityName", "Currency", "AssetClass", "AssetType", "DataSource")
-        VALUES (%s, %s, %s, %s, 'MSSB')
-        RETURNING id
-        """,
-        (security_name, currency, asset_class, ''),
-    )
-    new_id = cur.fetchone()[0]
-    # SecurityID: "T1" + id zero-padded to 7 digits = 9 chars total, e.g. "T10000012"
-    security_id = f'T1{str(new_id).zfill(7)}'
-    cur.execute(
-        'UPDATE security_info SET "SecurityID" = %s WHERE id = %s',
-        (security_id, new_id),
-    )
-    return security_id
-
-
-def _add_xref_if_missing(cur, security_id: str, ref_type: str, ref_id: str) -> None:
-    """Insert a security_xref row if ref_id is non-empty and not already present."""
-    if not ref_id or not ref_id.strip():
-        return
-    cur.execute(
-        'SELECT 1 FROM security_xref WHERE "REF_TYPE" = %s AND "REF_ID" = %s',
-        (ref_type, ref_id),
-    )
-    if cur.fetchone():
-        return
-    cur.execute(
-        """
-        INSERT INTO security_xref ("REF_ID", "REF_TYPE", "SecurityID", "DataSource")
-        VALUES (%s, %s, %s, 'MSSB')
-        """,
-        (ref_id, ref_type, security_id),
-    )
-
-
 def _get_or_create_security_id(
     cur,
     security_cache: dict[tuple, str],
@@ -280,10 +225,16 @@ def _get_or_create_security_id(
         return None
 
     # ── At least one identifier present but not in cache: create new security ─
-    security_id = _create_security(cur, security_name or '', currency or '', security_code, asset_class_map, logger)
-    _add_xref_if_missing(cur, security_id, 'ISIN',   isin   or '')
-    _add_xref_if_missing(cur, security_id, 'CUSIP',  cusip  or '')
-    _add_xref_if_missing(cur, security_id, 'Ticker', ticker or '')
+    asset_class = asset_class_map.get(security_code)
+    if asset_class is None and security_code:
+        logger.warning(
+            f"security_code '{security_code}' not found in broker_asset_class_map "
+            f"(broker='MSSB') — AssetClass set to NULL in security_info"
+        )
+    security_id = create_security(cur, security_name or '', currency or '', asset_class, '', 'MSSB')
+    add_xref_if_missing(cur, security_id, 'ISIN',   isin   or '', 'MSSB')
+    add_xref_if_missing(cur, security_id, 'CUSIP',  cusip  or '', 'MSSB')
+    add_xref_if_missing(cur, security_id, 'Ticker', ticker or '', 'MSSB')
 
     # Populate cache so later rows with the same ISIN/CUSIP resolve instantly
     if isin:

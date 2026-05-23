@@ -2,7 +2,7 @@
 stress_test.py — Stress-test scenario seeding and results.
 
 Functions:
-    seed_scenarios(as_of_date)      — seed scenario_definition + account_scenario,
+    seed_scenarios(as_of_date)      — seed st_scenarios + account_scenario,
                                       then trigger calculate_stress_test for each account
     calculate_stress_test(account_id, as_of_date)
                                     — STUB: write placeholder P&L to db_stress_results
@@ -37,10 +37,10 @@ _STATIC_PNL = {s["name"]: s for s in STRESS_SCENARIOS}
 
 def seed_scenarios(as_of_date=None) -> None:
     """
-    Seed scenario_definition and account_scenario from STRESS_SCENARIOS static data,
+    Seed st_scenarios and account_scenario from STRESS_SCENARIOS static data,
     then call calculate_stress_test for each account in _SEED_ACCOUNT_IDS.
 
-    Scenarios already present in scenario_definition (matched by name) are skipped.
+    Scenarios already present in st_scenarios (matched by name) are skipped.
     account_scenario entries that already exist are skipped (ON CONFLICT DO NOTHING).
 
     Args:
@@ -55,7 +55,7 @@ def seed_scenarios(as_of_date=None) -> None:
         with conn.cursor() as cur:
             for s in STRESS_SCENARIOS:
                 cur.execute(
-                    "SELECT scenario_id FROM scenario_definition WHERE name = %s",
+                    "SELECT scenario_id FROM st_scenarios WHERE name = %s",
                     (s["name"],),
                 )
                 row = cur.fetchone()
@@ -65,7 +65,7 @@ def seed_scenarios(as_of_date=None) -> None:
                 else:
                     cur.execute(
                         """
-                        INSERT INTO scenario_definition (name, period, severity)
+                        INSERT INTO st_scenarios (name, period, severity)
                         VALUES (%s, %s, %s)
                         RETURNING scenario_id
                         """,
@@ -116,7 +116,7 @@ def calculate_stress_test(account_id: int, as_of_date) -> None:
                 """
                 SELECT sd.scenario_id, sd.name
                 FROM account_scenario acs
-                JOIN scenario_definition sd ON sd.scenario_id = acs.scenario_id
+                JOIN st_scenarios sd ON sd.scenario_id = acs.scenario_id
                 WHERE acs.account_id = %s AND sd.is_active = TRUE
                 """,
                 (account_id,),
@@ -148,11 +148,11 @@ def calculate_stress_test(account_id: int, as_of_date) -> None:
 # ── Read ───────────────────────────────────────────────────────────────────────
 
 def read_stress_results(account_id: int) -> list[dict]:
-    """Return stress results for the latest as_of_date, joined with scenario_definition."""
+    """Return stress results for the latest as_of_date, joined with st_scenarios."""
     sql = """
         SELECT sd.name, sd.period, sr.pnl_usd, sr.pnl_pct, sd.severity
         FROM db_stress_results sr
-        JOIN scenario_definition sd ON sd.scenario_id = sr.scenario_id
+        JOIN st_scenarios sd ON sd.scenario_id = sr.scenario_id
         WHERE sr.account_id = %s
           AND sr.as_of_date = (
               SELECT MAX(as_of_date) FROM db_stress_results WHERE account_id = %s

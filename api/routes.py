@@ -709,6 +709,7 @@ from dashboard.positions_db import (
 )
 from dashboard.concentration_db import read_concentrations
 from dashboard.stress_test import read_stress_results
+from dashboard.stress_scenarios import get_stress_scenarios as _get_stress_scenarios
 from dashboard.guage_data import build_gauge_data
 from dashboard.static_data import (
     RISK, FACTOR_EXPOSURES_V2, ASSET_ALLOCATION_DRILLDOWN,
@@ -716,7 +717,6 @@ from dashboard.static_data import (
     RISK_PARAMETERS, RISK_SUMMARY_MOCK, RISK_CONCENTRATIONS,
     RISK_CONTRIB_MOCK,
     RISK_ASSET_LEVELS, RISK_REGION_LEVELS, RISK_INDUSTRY_LEVELS, RISK_CURRENCY_LEVELS,
-    STRESS_SCENARIOS_V2,
     PORTFOLIO_SUMMARY, PORTFOLIO_POSITIONS, PORTFOLIO_CHART, PORTFOLIO_ALLOC,
 )
 from dashboard.allocation_drilldown import get_alloc_drilldown_data
@@ -1059,7 +1059,7 @@ def get_stress_scenarios(username):
     account_id, err = _get_account_id(username=username)
     if err:
         return err
-    return jsonify(STRESS_SCENARIOS_V2)
+    return jsonify(_get_stress_scenarios(account_id))
 
 
 @app.route("/api/risk/alerts")

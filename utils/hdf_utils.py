@@ -31,7 +31,7 @@ def save(df, category, hdf_file):
 def read(symbols, category, hdf_file):
 
     data = []
-    with pd.HDFStore(hdf_file) as store:
+    with pd.HDFStore(hdf_file, mode='r') as store:
         for symbol in symbols:
             path = category + '/' + symbol
             if path in store:
@@ -48,7 +48,7 @@ def read(symbols, category, hdf_file):
 # list all symbols in hdf_file
 def list(hdf_file):
     
-    with pd.HDFStore(hdf_file) as store:
+    with pd.HDFStore(hdf_file, mode='r') as store:
         keys = store.keys()
         
     keys = [x.split('/')[-2:] for x in keys]

@@ -220,6 +220,19 @@
     "retry_delay_seconds": 60,
     "enabled": true,
     "venv_path": null
+  },
+  {
+    "id": "stress_test",
+    "name": "Run Stress Test",
+    "description": "Execute stress testing for all accounts.",
+    "script_path": "api/trgapp/process2/calc_stress_test.py",
+    "script_type": "python",
+    "schedule_time": null,
+    "dependencies": ["calculate_var"],
+    "max_retries": 2,
+    "retry_delay_seconds": 60,
+    "enabled": true,
+    "venv_path": null
   }
 
 ]

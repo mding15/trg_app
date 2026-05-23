@@ -317,7 +317,7 @@ def create_tables() -> None:
                 )
             """)
             cur.execute("""
-                CREATE TABLE IF NOT EXISTS scenario_definition (
+                CREATE TABLE IF NOT EXISTS st_scenarios (
                     scenario_id  SERIAL       PRIMARY KEY,
                     name         VARCHAR(128) NOT NULL,
                     period       VARCHAR(64),
@@ -328,7 +328,7 @@ def create_tables() -> None:
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS account_scenario (
                     account_id   INT NOT NULL,
-                    scenario_id  INT NOT NULL REFERENCES scenario_definition (scenario_id),
+                    scenario_id  INT NOT NULL REFERENCES st_scenarios (scenario_id),
                     PRIMARY KEY (account_id, scenario_id)
                 )
             """)
@@ -337,7 +337,7 @@ def create_tables() -> None:
                     id           SERIAL PRIMARY KEY,
                     account_id   INT   NOT NULL,
                     as_of_date   DATE  NOT NULL,
-                    scenario_id  INT   NOT NULL REFERENCES scenario_definition (scenario_id),
+                    scenario_id  INT   NOT NULL REFERENCES st_scenarios (scenario_id),
                     pnl_usd      FLOAT,
                     pnl_pct      FLOAT,
                     updated_at   TIMESTAMP NOT NULL DEFAULT NOW(),

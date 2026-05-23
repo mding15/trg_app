@@ -230,7 +230,7 @@ def run(month: str) -> None:
     print(f'CSV: {len(saved)} file(s) written to {saved[0].parent}')
 
     n = insert_db(df)
-    print(f'DB:  {n} row(s) upserted into treasury_yield')
+    print(f'DB:  {n} row(s) upserted into treasury_yield  (latest date: {df["date"].max()})')
 
     consolidate()
 

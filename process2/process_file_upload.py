@@ -39,6 +39,7 @@ import openpyxl
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from database2 import pg_connection
+from security_utils import create_security, add_xref_if_missing
 
 FEED_SOURCE = 'file_upload'
 DEFAULT_FILE = os.path.join(os.path.dirname(__file__), 'test_data', 'file_upload.xlsx')
@@ -157,54 +158,6 @@ def _load_cash_security_map(cur) -> dict[str, str]:
     return {row[1]: row[0] for row in cur.fetchall()}
 
 
-# ── security creation ──────────────────────────────────────────────────────────
-
-def _create_security(
-    cur,
-    security_name: str,
-    currency: str,
-    asset_class: str | None,
-    asset_type: str | None,
-    logger: logging.Logger,
-) -> str:
-    """Insert a new row into security_info and return the generated SecurityID."""
-    cur.execute(
-        """
-        INSERT INTO security_info
-            ("SecurityName", "Currency", "AssetClass", "AssetType", "DataSource")
-        VALUES (%s, %s, %s, %s, 'FILE_UPLOAD')
-        RETURNING id
-        """,
-        (security_name, currency, asset_class, asset_type),
-    )
-    new_id = cur.fetchone()[0]
-    security_id = f'T1{str(new_id).zfill(7)}'
-    cur.execute(
-        'UPDATE security_info SET "SecurityID" = %s WHERE id = %s',
-        (security_id, new_id),
-    )
-    return security_id
-
-
-def _add_xref_if_missing(cur, security_id: str, ref_type: str, ref_id: str) -> None:
-    """Insert a security_xref row if ref_id is non-empty and not already present."""
-    if not ref_id or not ref_id.strip():
-        return
-    cur.execute(
-        'SELECT 1 FROM security_xref WHERE "REF_TYPE" = %s AND "REF_ID" = %s',
-        (ref_type, ref_id),
-    )
-    if cur.fetchone():
-        return
-    cur.execute(
-        """
-        INSERT INTO security_xref ("REF_ID", "REF_TYPE", "SecurityID", "DataSource")
-        VALUES (%s, %s, %s, 'FILE_UPLOAD')
-        """,
-        (ref_id, ref_type, security_id),
-    )
-
-
 def _get_or_create_security_id(
     cur,
     security_cache: dict[tuple, str],
@@ -254,10 +207,10 @@ def _get_or_create_security_id(
         return None
 
     # ── At least one identifier present but not in cache: create new security ─
-    security_id = _create_security(cur, security_name or '', currency or '', asset_class, asset_type, logger)
-    _add_xref_if_missing(cur, security_id, 'ISIN',   isin   or '')
-    _add_xref_if_missing(cur, security_id, 'CUSIP',  cusip  or '')
-    _add_xref_if_missing(cur, security_id, 'Ticker', ticker or '')
+    security_id = create_security(cur, security_name or '', currency or '', asset_class, asset_type, 'FILE_UPLOAD')
+    add_xref_if_missing(cur, security_id, 'ISIN',   isin   or '', 'FILE_UPLOAD')
+    add_xref_if_missing(cur, security_id, 'CUSIP',  cusip  or '', 'FILE_UPLOAD')
+    add_xref_if_missing(cur, security_id, 'Ticker', ticker or '', 'FILE_UPLOAD')
 
     if isin:
         security_cache[('ISIN', isin)]   = security_id

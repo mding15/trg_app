@@ -294,3 +294,111 @@ CREATE TABLE public.current_security (
 	"insert_time" TIMESTAMP NULL DEFAULT NOW(),
 	CONSTRAINT current_security_pkey PRIMARY KEY ("SecurityID")
 );
+
+-- ---------------------------------------------------------------
+-- st_corefactor
+-- ---------------------------------------------------------------
+CREATE TABLE st_corefactor (
+  id              INTEGER         NOT NULL,
+  symbol          VARCHAR(50)     NOT NULL,
+  factor_name     VARCHAR(255)    NOT NULL,
+  factor_sec_id   VARCHAR(50)     NOT NULL,
+  asset_class     VARCHAR(100)    NOT NULL,
+  PRIMARY KEY (id)
+);
+
+-- ---------------------------------------------------------------
+-- st_model
+-- ---------------------------------------------------------------
+CREATE TABLE st_model (
+  model_id    INTEGER         NOT NULL,
+  model_name  VARCHAR(255)    NOT NULL,
+  model_type  VARCHAR(50)     NOT NULL,
+  f1          VARCHAR(50)     NULL,
+  f2          VARCHAR(50)     NULL,
+  f3          VARCHAR(50)     NULL,
+  f4          VARCHAR(50)     NULL,
+  f5          VARCHAR(50)     NULL,
+  f6          VARCHAR(50)     NULL,
+  f7          VARCHAR(50)     NULL,
+  f8          VARCHAR(50)     NULL,
+  f9          VARCHAR(50)     NULL,
+  f10         VARCHAR(50)     NULL,
+  PRIMARY KEY (model_id)
+);
+
+-- ---------------------------------------------------------------
+-- st_shock  (29 rows: scenario × factor shocks)
+-- ---------------------------------------------------------------
+CREATE TABLE st_shock (
+  scenario_id     INTEGER         NOT NULL,
+  factor_symbol   VARCHAR(50)     NOT NULL,
+  factor_sec_id   VARCHAR(50)     NOT NULL,
+  shock           FLOAT           NOT NULL,   -- e.g. -50 means −50 %
+  unit            VARCHAR(50)     NOT NULL,   -- 'percentage'
+  PRIMARY KEY (scenario_id, factor_symbol)
+);
+
+-- ---------------------------------------------------------------
+-- st_model_beta  (1 165 rows: factor loadings per security)
+-- ---------------------------------------------------------------
+CREATE TABLE st_model_beta (
+  id          INTEGER         NOT NULL,
+  model_id    INTEGER         NOT NULL,
+  security_id VARCHAR(50)     NOT NULL,
+  b1          FLOAT  NULL,
+  b2          FLOAT  NULL,
+  b3          FLOAT  NULL,
+  b4          FLOAT  NULL,
+  b5          FLOAT  NULL,
+  b6          FLOAT  NULL,
+  b7          FLOAT  NULL,
+  b8          FLOAT  NULL,
+  b9          FLOAT  NULL,
+  b10         FLOAT  NULL,
+  PRIMARY KEY (id),
+  FOREIGN KEY (model_id) REFERENCES st_model (model_id)
+);
+
+-- ---------------------------------------------------------------
+-- st_security_pnl  (stress test pnl per scenario_id, security)
+-- ---------------------------------------------------------------
+CREATE TABLE st_security_pnl (
+  id          INTEGER         GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  scenario_id INTEGER         NOT NULL,
+  security_id VARCHAR(50)     NOT NULL,
+  pnl         FLOAT           NULL,
+
+  FOREIGN KEY (scenario_id) REFERENCES st_scenarios (scenario_id),
+  CONSTRAINT uq_security_pnl UNIQUE (scenario_id, security_id)
+);
+
+-- ---------------------------------------------------------------
+-- st_scenarios  (5 rows: scenario definitions)
+-- ---------------------------------------------------------------
+CREATE TABLE public.st_scenarios (
+	scenario_id int4 DEFAULT nextval('scenario_definition_scenario_id_seq'::regclass) NOT NULL,
+	"name" varchar(128) NOT NULL,
+	"period" varchar(64) NULL,
+	severity varchar(16) NOT NULL,
+	type varchar(20) NULL,   -- 'Historical' | 'Hypothetical'
+	is_active bool DEFAULT true NOT NULL,
+	CONSTRAINT scenario_definition_pkey PRIMARY KEY (scenario_id)
+);
+-- Migration (run once against live DB):
+-- ALTER TABLE public.st_scenarios ADD COLUMN IF NOT EXISTS type VARCHAR(20) NULL;
+-- UPDATE public.st_scenarios SET type = 'Hypothetical' WHERE period = 'Hypothetical';
+-- UPDATE public.st_scenarios SET type = 'Historical'   WHERE period != 'Hypothetical' AND type IS NULL;
+
+-- ---------------------------------------------------------------
+-- st_account_summary  (stress test P&L per account × scenario)
+-- ---------------------------------------------------------------
+CREATE TABLE public.st_account_summary (
+  id          INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  account_id  INTEGER NOT NULL,
+  as_of_date  DATE    NOT NULL,
+  scenario_id INTEGER NOT NULL,
+  st_pnl      FLOAT   NULL,
+  CONSTRAINT uq_st_account_summary UNIQUE (account_id, as_of_date, scenario_id),
+  FOREIGN KEY (scenario_id) REFERENCES public.st_scenarios (scenario_id)
+);
