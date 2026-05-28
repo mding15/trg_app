@@ -9,14 +9,16 @@ Steps:
     3. Insert results into position_var per account (delete + re-insert).
     Failed accounts are logged and skipped.
 
+Run populate_parent_positions.py before this script to ensure parent account rows
+are present in proc_positions.
+
 Usage:
     python calculate_var.py                                          # all feeds, latest date
     python calculate_var.py --feed-source mssb                      # mssb only, latest date
     python calculate_var.py --date 2025-09-30                        # all feeds, specific date
     python calculate_var.py --feed-source mssb --date 2025-09-30    # mssb, specific date
-    python calculate_var.py --feed-source mssb --account-id 5       # one leaf account
+    python calculate_var.py --feed-source mssb --account-id 5       # one account
     python calculate_var.py --feed-source mssb --date 2025-09-30 --account-id 5
-    python calculate_var.py --feed-source mssb --date 2025-09-30 --account-id 12
 """
 from __future__ import annotations
 
@@ -61,125 +63,6 @@ def _setup_logger(feed_source: str | None, as_of_date, account_id=None) -> loggi
     logger.addHandler(sh)
 
     return logger
-
-
-# ── results builder ────────────────────────────────────────────────────────────
-
-# ── Parent account hierarchy ───────────────────────────────────────────────────
-
-def _load_parent_map() -> dict[int, list[int]]:
-    """
-    Return {parent_account_id: [child_account_id, ...]} for all accounts that have a parent.
-    Parent accounts are virtual — they have no proc_positions rows of their own.
-    """
-    with pg_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                'SELECT account_id, parent_account_id FROM account WHERE parent_account_id IS NOT NULL'
-            )
-            rows = cur.fetchall()
-    parent_map: dict[int, list[int]] = {}
-    for child_id, parent_id in rows:
-        parent_map.setdefault(parent_id, []).append(child_id)
-    return parent_map
-
-
-def _get_leaf_descendants(account_id: int, parent_map: dict[int, list[int]]) -> list[int]:
-    """
-    Recursively collect all leaf descendants of account_id (up to 5 levels deep).
-    A leaf is any account that does not appear as a key in parent_map.
-    Since we always resolve back to leaf positions, parent processing order does not matter.
-    """
-    children = parent_map.get(account_id, [])
-    if not children:
-        return [account_id]
-    leaves: list[int] = []
-    for child in children:
-        leaves.extend(_get_leaf_descendants(child, parent_map))
-    return leaves
-
-
-# Columns summed across child positions when merging by SecurityID
-_SUM_COLS = {'MarketValue', 'Quantity', 'total_cost'}
-# Columns weighted-averaged by MarketValue
-_WAVG_COLS = {'ExpectedReturn'}
-# Columns that are cleared for virtual parent accounts
-_CLEAR_COLS = {'exclude_reason'}
-
-
-def _merge_positions_for_parent(
-    all_positions: pd.DataFrame,
-    leaf_ids: list[int],
-    parent_account_id: int,
-) -> pd.DataFrame:
-    """
-    Build consolidated positions for a parent account by merging all leaf descendant
-    positions grouped by (SecurityID, broker, broker_account).
-
-    Aggregation rules:
-      MarketValue, Quantity  — sum
-      ExpectedReturn         — weighted average by MarketValue
-      excluded               — True only if ALL child rows for that group are excluded;
-                               active (False) if active in any child
-      exclude_reason         — set to None (parent is virtual)
-      account_id             — set to parent_account_id
-      pos_id                 — regenerated as "1", "2", ...
-      all other columns      — first value (static fields, same per group)
-    """
-    _GROUP_KEYS = ['SecurityID', 'broker', 'broker_account']
-
-    df = all_positions[all_positions['account_id'].isin(leaf_ids)].copy()
-    if df.empty:
-        return df
-
-    # Fill unknown broker fields before grouping so NULLs form a named group
-    df['broker']         = df['broker'].fillna('Unknown')
-    df['broker_account'] = df['broker_account'].fillna('Unknown')
-
-    df['MarketValue'] = pd.to_numeric(df['MarketValue'], errors='coerce').fillna(0.0)
-    if 'Quantity' in df.columns:
-        df['Quantity'] = pd.to_numeric(df['Quantity'], errors='coerce').fillna(0.0)
-    if 'ExpectedReturn' in df.columns:
-        df['ExpectedReturn'] = pd.to_numeric(df['ExpectedReturn'], errors='coerce').fillna(0.0)
-        df['_er_mv'] = df['MarketValue'] * df['ExpectedReturn']
-
-    # excluded: True only if every occurrence of that group is explicitly True
-    excluded_agg = (
-        df.groupby(_GROUP_KEYS)['excluded']
-        .apply(lambda s: all(x is True for x in s))
-        .rename('excluded')
-        .reset_index()
-    )
-
-    # Build groupby aggregation — skip columns handled separately
-    _skip = {'SecurityID', 'broker', 'broker_account',
-             'account_id', 'pos_id', 'excluded',
-             'exclude_reason', 'ExpectedReturn', '_er_mv'}
-    agg_dict: dict[str, str] = {}
-    for col in df.columns:
-        if col in _skip:
-            continue
-        agg_dict[col] = 'sum' if col in _SUM_COLS else 'first'
-    if '_er_mv' in df.columns:
-        agg_dict['_er_mv'] = 'sum'
-
-    merged = df.groupby(_GROUP_KEYS).agg(agg_dict).reset_index()
-
-    # Resolve weighted-average ExpectedReturn
-    if '_er_mv' in merged.columns:
-        mv_denom = merged['MarketValue'].replace(0.0, float('nan'))
-        merged['ExpectedReturn'] = merged['_er_mv'] / mv_denom
-        merged = merged.drop(columns=['_er_mv'])
-
-    # Attach excluded aggregation
-    merged = merged.merge(excluded_agg, on=_GROUP_KEYS, how='left')
-
-    # Regenerate pos_id, set parent identity, clear exclude_reason
-    merged['pos_id']         = [str(i + 1) for i in range(len(merged))]
-    merged['account_id']     = parent_account_id
-    merged['exclude_reason'] = None
-
-    return merged.reset_index(drop=True)
 
 
 # ── Beta helpers ───────────────────────────────────────────────────────────────
@@ -261,7 +144,7 @@ def _run_var(
     betas — pre-fetched {security_id: beta} for this account (may be empty).
     Raises on engine or DB failure — caller decides whether to skip or abort.
     """
-    var_metrics = var_engine.calc_var(active)   # DataFrame indexed by pos_id, metrics only
+    var_metrics = var_engine.calc_var(active)
     result = active.set_index('pos_id').join(var_metrics, how='left')
 
     if not excluded.empty:
@@ -270,10 +153,8 @@ def _run_var(
             excl[col] = None
         result = pd.concat([result, excl])
 
-    # add beta to all rows (active + excluded)
     result = add_beta_to_result(result, betas, logger)
-
-    result = result.reset_index()   # bring pos_id back as a column for insert_results
+    result = result.reset_index()
     n = insert_results(result, as_of_date)
     logger.info(f"{label}: {len(active)} positions calculated, {len(excluded)} excluded, {n} rows inserted")
     return n
@@ -285,10 +166,12 @@ def calculate_var(feed_source: str | None = None, as_of_date=None, account_id: i
     """
     Run VaR for the given feed_source and as_of_date.
 
-    feed_source=None — process all feed sources combined.
-    account_id=None  — process all leaf accounts then all parent accounts (full run).
-    account_id=<leaf>   — process that single leaf account only.
-    account_id=<parent> — fetch leaf descendants' positions, merge, run VaR for parent only.
+    Parent account rows must already be present in proc_positions (written by
+    populate_parent_positions.py) — this function treats all accounts identically.
+
+    feed_source=None  — process all feed sources combined.
+    account_id=None   — process all accounts.
+    account_id=<id>   — process that single account only.
 
     If as_of_date is not provided, the latest as_of_date across proc_positions is used.
     """
@@ -299,71 +182,29 @@ def calculate_var(feed_source: str | None = None, as_of_date=None, account_id: i
 
     # ── Single account mode ───────────────────────────────────────────────────
     if account_id is not None:
-        parent_map = _load_parent_map()
+        logger.info(
+            f"=== Start VaR: feed_source={feed_source!r} as_of_date={as_of_date} "
+            f"account_id={account_id} ==="
+        )
+        try:
+            params, all_positions = preprocess_var(as_of_date, feed_source, account_ids=[account_id])
+        except Exception as e:
+            logger.error(f"preprocess_var failed: {e}")
+            raise
 
-        if account_id in parent_map:
-            # ── Parent account ────────────────────────────────────────────────
-            leaf_ids = _get_leaf_descendants(account_id, parent_map)
-            logger.info(
-                f"=== Start VaR: feed_source={feed_source!r} as_of_date={as_of_date} "
-                f"parent account_id={account_id} leaf_ids={leaf_ids} ==="
-            )
-            try:
-                params, all_positions = preprocess_var(as_of_date, feed_source, account_ids=leaf_ids)
-            except Exception as e:
-                logger.error(f"preprocess_var failed: {e}")
-                raise
+        sec_ids          = all_positions['SecurityID'].dropna().unique().tolist()
+        acct_beta_keys   = load_account_beta_keys([account_id])
+        unique_beta_keys = list(set(acct_beta_keys.values()))
+        betas_bulk       = fetch_betas_bulk(unique_beta_keys, sec_ids)
+        betas            = betas_bulk.get(acct_beta_keys.get(account_id), {})
 
-            merged = _merge_positions_for_parent(all_positions, leaf_ids, account_id)
-            if merged.empty:
-                logger.warning(
-                    f"No positions found for parent account_id={account_id} "
-                    f"leaf_ids={leaf_ids} — nothing to insert."
-                )
-                return
-
-            # Pre-fetch beta for this parent account
-            sec_ids          = all_positions['SecurityID'].dropna().unique().tolist()
-            acct_beta_keys   = load_account_beta_keys([account_id])
-            unique_beta_keys = list(set(acct_beta_keys.values()))
-            betas_bulk       = fetch_betas_bulk(unique_beta_keys, sec_ids)
-            betas            = betas_bulk.get(acct_beta_keys.get(account_id), {})
-
-            excluded = merged[merged['excluded'] == True]
-            active   = merged[merged['excluded'] != True]
-            try:
-                n = _run_var(f"parent_account_id={account_id}", active, excluded, as_of_date, betas, logger)
-            except Exception as e:
-                logger.error(f"parent_account_id={account_id}: FAILED — {e}")
-                raise
-
-        else:
-            # ── Leaf account ──────────────────────────────────────────────────
-            logger.info(
-                f"=== Start VaR: feed_source={feed_source!r} as_of_date={as_of_date} "
-                f"leaf account_id={account_id} ==="
-            )
-            try:
-                params, all_positions = preprocess_var(as_of_date, feed_source, account_ids=[account_id])
-            except Exception as e:
-                logger.error(f"preprocess_var failed: {e}")
-                raise
-
-            # Pre-fetch beta for this leaf account
-            sec_ids          = all_positions['SecurityID'].dropna().unique().tolist()
-            acct_beta_keys   = load_account_beta_keys([account_id])
-            unique_beta_keys = list(set(acct_beta_keys.values()))
-            betas_bulk       = fetch_betas_bulk(unique_beta_keys, sec_ids)
-            betas            = betas_bulk.get(acct_beta_keys.get(account_id), {})
-
-            acc_pos  = all_positions[all_positions['account_id'] == account_id]
-            excluded = acc_pos[acc_pos['excluded'] == True]
-            active   = acc_pos[acc_pos['excluded'] != True]
-            try:
-                n = _run_var(f"account_id={account_id}", active, excluded, as_of_date, betas, logger)
-            except Exception as e:
-                logger.error(f"account_id={account_id}: FAILED — {e}")
-                raise
+        excluded = all_positions[all_positions['excluded'] == True]
+        active   = all_positions[all_positions['excluded'] != True]
+        try:
+            n = _run_var(f"account_id={account_id}", active, excluded, as_of_date, betas, logger)
+        except Exception as e:
+            logger.error(f"account_id={account_id}: FAILED — {e}")
+            raise
 
         logger.info(f"Total: {n} rows inserted")
         logger.info("=== Done ===")
@@ -378,18 +219,13 @@ def calculate_var(feed_source: str | None = None, as_of_date=None, account_id: i
         logger.error(f"preprocess_var failed: {e}")
         raise
 
-    leaf_account_ids = all_positions['account_id'].unique()
-
-    # Load parent map early so we can include parent account IDs in the beta pre-fetch
-    parent_map  = _load_parent_map()
-    all_parents = sorted(parent_map.keys()) if parent_map else []
+    all_account_ids = all_positions['account_id'].unique()
 
     # Pre-fetch all betas in one pass: one DB call for account→beta_key, one for betas
-    all_acct_ids     = [int(x) for x in leaf_account_ids] + all_parents
     sec_ids          = all_positions['SecurityID'].dropna().unique().tolist()
-    acct_beta_keys   = load_account_beta_keys(all_acct_ids)           # {account_id: beta_key}
+    acct_beta_keys   = load_account_beta_keys([int(x) for x in all_account_ids])
     unique_beta_keys = list(set(acct_beta_keys.values()))
-    betas_bulk       = fetch_betas_bulk(unique_beta_keys, sec_ids)     # {beta_key: {sec_id: beta}}
+    betas_bulk       = fetch_betas_bulk(unique_beta_keys, sec_ids)
     logger.info(
         f"Beta pre-fetch: {len(acct_beta_keys)} accounts with beta_key, "
         f"{len(unique_beta_keys)} unique key(s), "
@@ -397,13 +233,11 @@ def calculate_var(feed_source: str | None = None, as_of_date=None, account_id: i
     )
 
     def _account_betas(acct_id: int) -> dict:
-        """Return the pre-fetched {security_id: beta} dict for acct_id."""
         bk = acct_beta_keys.get(acct_id)
         return betas_bulk.get(bk, {}) if bk else {}
 
     total_inserted = 0
-
-    for acct_id in leaf_account_ids:
+    for acct_id in all_account_ids:
         acc_pos  = all_positions[all_positions['account_id'] == acct_id]
         excluded = acc_pos[acc_pos['excluded'] == True]
         active   = acc_pos[acc_pos['excluded'] != True]
@@ -415,37 +249,6 @@ def calculate_var(feed_source: str | None = None, as_of_date=None, account_id: i
         except Exception as e:
             logger.error(f"account_id={acct_id}: FAILED — {e}")
             continue
-
-    logger.info(f"Leaf accounts: {total_inserted} rows inserted across {len(leaf_account_ids)} account(s)")
-
-    # ── Parent account VaR ─────────────────────────────────────────────────────
-    if not parent_map:
-        logger.info("No parent accounts configured — skipping consolidation.")
-    else:
-        logger.info(f"Processing {len(all_parents)} parent account(s): {all_parents}")
-
-        for parent_id in all_parents:
-            leaf_ids = _get_leaf_descendants(parent_id, parent_map)
-            logger.info(f"parent_account_id={parent_id}: leaf_ids={leaf_ids}")
-
-            merged = _merge_positions_for_parent(all_positions, leaf_ids, parent_id)
-            if merged.empty:
-                logger.warning(
-                    f"parent_account_id={parent_id}: no positions found for "
-                    f"leaf_ids={leaf_ids} in feed_source={feed_source!r}. Skipping."
-                )
-                continue
-
-            excluded = merged[merged['excluded'] == True]
-            active   = merged[merged['excluded'] != True]
-            try:
-                total_inserted += _run_var(
-                    f"parent_account_id={parent_id}", active, excluded, as_of_date,
-                    _account_betas(parent_id), logger,
-                )
-            except Exception as e:
-                logger.error(f"parent_account_id={parent_id}: FAILED — {e}")
-                continue
 
     logger.info(f"Total: {total_inserted} rows inserted")
     logger.info("=== Done ===")
@@ -459,7 +262,7 @@ if __name__ == '__main__':
     parser.add_argument('--date', metavar='YYYY-MM-DD',
                         help='as_of_date to process (default: latest in proc_positions)')
     parser.add_argument('--account-id', metavar='ACCOUNT_ID', type=int,
-                        help='Process a single account_id (leaf or parent); default: all accounts')
+                        help='Process a single account_id; default: all accounts')
     args = parser.parse_args()
 
     calculate_var(args.feed_source, args.date, args.account_id)

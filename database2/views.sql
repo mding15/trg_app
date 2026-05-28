@@ -4,8 +4,8 @@ CREATE OR REPLACE VIEW public.whatif_portfolio_metrics
 AS WITH base AS (
          SELECT ppv.port_id,
             sum(ppv.market_value) AS mv,
-            sum(ppv.marginal_std) AS std_dollar,
-            sum(ppv.marginal_var) AS var_dollar,
+            sum(ppv.mg_std) AS std_dollar,
+            sum(ppv.mg_var_95) AS var_dollar,
             sum(ppv.market_value * ppv.expected_return) AS weighted_ret
            FROM port_position_var ppv
           GROUP BY ppv.port_id

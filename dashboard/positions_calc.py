@@ -43,7 +43,7 @@ def get_positions_on_date(conn, as_of_date, account_id: int) -> pd.DataFrame:
             """
             SELECT security_id, ticker, security_name, market_value, currency,
                    "class" AS asset_class, region, sector,
-                   marginal_tvar, marginal_var, marginal_std, expected_return, beta,
+                   mg_es_95, mg_var_95, mg_std, expected_return, beta,
                    total_cost, broker, broker_account
             FROM position_var
             WHERE as_of_date = %s AND account_id = %s
@@ -185,9 +185,9 @@ def compute_portfolio_summary(account_id: int, as_of_date, df: pd.DataFrame) -> 
         s = pd.to_numeric(df[col], errors='coerce').sum()
         return float(s) if not pd.isna(s) else None
 
-    sum_mvar  = _sum_col('marginal_var')
-    sum_mtvar = _sum_col('marginal_tvar')
-    sum_mstd  = _sum_col('marginal_std')
+    sum_mvar  = _sum_col('mg_var_95')
+    sum_mtvar = _sum_col('mg_es_95')
+    sum_mstd  = _sum_col('mg_std')
     er            = pd.to_numeric(df['expected_return'], errors='coerce')
     sum_mv_er_val = (mv * er).sum()
     sum_mv_er     = float(sum_mv_er_val) if not pd.isna(sum_mv_er_val) else None
@@ -304,8 +304,8 @@ def compute_positions(account_id: int, as_of_date, df: pd.DataFrame) -> list[dic
         one_yr_mv = mv_map_from_history(conn, account_id, one_year_ago)
 
     df['market_value']  = pd.to_numeric(df['market_value'],  errors='coerce').fillna(0.0)
-    df['marginal_tvar'] = pd.to_numeric(df['marginal_tvar'], errors='coerce')
-    df['total_cost']    = pd.to_numeric(df['total_cost'],    errors='coerce').replace(0, float('nan'))
+    df['mg_es_95']   = pd.to_numeric(df['mg_es_95'],   errors='coerce')
+    df['total_cost'] = pd.to_numeric(df['total_cost'], errors='coerce').replace(0, float('nan'))
 
     df_agg = (
         df.groupby(['security_id', 'broker', 'broker_account'], dropna=False)
@@ -314,8 +314,8 @@ def compute_positions(account_id: int, as_of_date, df: pd.DataFrame) -> list[dic
             asset_class=  ('asset_class',   'first'),
             currency=     ('currency',      'first'),
             ticker=       ('ticker',        'first'),
-            market_value=   ('market_value',   'sum'),
-            marginal_tvar=  ('marginal_tvar',  'sum'),
+            market_value= ('market_value',  'sum'),
+            mg_es_95=     ('mg_es_95',      'sum'),
             total_cost=     ('total_cost',     lambda x: x.sum(min_count=1)),
         )
         .reset_index()
@@ -348,7 +348,7 @@ def compute_positions(account_id: int, as_of_date, df: pd.DataFrame) -> list[dic
             "mtdReturn":      pct_return(mv, mtd_mv, key),
             "ytdReturn":      pct_return(mv, ytd_mv, key),
             "oneYearReturn":  pct_return(mv, one_yr_mv, key),
-            "varContrib":     float(row['marginal_tvar']) if pd.notna(row['marginal_tvar']) else None,
+            "varContrib":     float(row['mg_es_95']) if pd.notna(row['mg_es_95']) else None,
             "unrealizedGain": ug,
             "broker":         broker,
             "brokerAccount":  ba,

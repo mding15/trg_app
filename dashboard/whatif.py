@@ -268,6 +268,42 @@ def _fetch_weights_batch(cur, port_ids: list) -> dict:
     return result
 
 
+def _fetch_params_batch(cur, port_ids: list) -> dict:
+    """Return {port_id: params dict} with risk settings for tracked and adhoc portfolios."""
+    if not port_ids:
+        return {}
+    cur.execute(
+        """
+        SELECT pi.port_id,
+               ap.risk_horizon, ap.risk_measure, ap.base_currency, ap.benchmark, ap.exp_return
+        FROM portfolio_info pi
+        JOIN account_parameters ap ON ap.account_id = pi.account_id
+        WHERE pi.port_type = 'tracked'
+          AND pi.port_id = ANY(%s)
+
+        UNION ALL
+
+        SELECT pi.port_id,
+               pp."RiskHorizon", pp."TailMeasure", pp."BaseCurrency", pp."Benchmark", pp."ExpectedReturn"
+        FROM portfolio_info pi
+        JOIN port_parameters pp ON pp.port_id = pi.port_id
+        WHERE pi.port_type = 'adhoc'
+          AND pi.port_id = ANY(%s)
+        """,
+        (port_ids, port_ids),
+    )
+    return {
+        row[0]: {
+            'risk_horizon':  row[1],
+            'risk_measure':  row[2],
+            'base_currency': row[3],
+            'benchmark':     row[4],
+            'exp_return':    row[5],
+        }
+        for row in cur.fetchall()
+    }
+
+
 def _fetch_weights_account(cur, account_id: int, as_of_date) -> dict | None:
     """
     Single query: returns {class_code: pct} for the given account/date from position_var.
@@ -339,32 +375,42 @@ def get_whatif_portfolios(username: str, account_id: int | None = None) -> list:
             if account_row is not None:
                 account_weights = _fetch_weights_account(cur, account_id, account_row[2])
 
-    def _to_entry(row, weights):
+            # Batch-fetch risk parameters for all portfolios.
+            all_port_ids = port_ids + ([account_row[0]] if account_row is not None else [])
+            params_by_port = _fetch_params_batch(cur, all_port_ids)
+
+    def _to_entry(row, weights, params=None):
         port_id, name, as_of_date, mv, exp_ret, vol_pct, var_1d_95, sharpe_vol, sharpe_var = row
         size = round(float(mv) / 1_000_000, 2) if mv else 0.0
         # _calc_conc needs numeric values; treat None as 0, skip if no data at all.
         conc_input = {k: (weights.get(k) or 0) for k in _CLASS_KEYS}
         conc = _calc_conc(conc_input) if any(conc_input.values()) else None
+        p = params or {}
         return {
-            'id':        port_id,
-            'name':      name,
-            'as_of_date': as_of_date.strftime('%d/%m/%y') if as_of_date else '—',
-            'size':      size,
-            'weights':   weights,
-            'exp_ret':   round(float(exp_ret), 4) if exp_ret is not None else None,
-            'vol':       round(float(vol_pct), 4) if vol_pct is not None else None,
-            'vrisk':     round(float(var_1d_95), 2) if var_1d_95 is not None else None,
-            'sharpeVol': round(float(sharpe_vol), 4) if sharpe_vol is not None else None,
-            'sharpeVar': round(float(sharpe_var), 4) if sharpe_var is not None else None,
-            'conc':      conc,
+            'id':            port_id,
+            'name':          name,
+            'as_of_date':    as_of_date.strftime('%d/%m/%y') if as_of_date else '—',
+            'size':          size,
+            'weights':       weights,
+            'exp_ret':       round(float(exp_ret), 4) if exp_ret is not None else None,
+            'vol':           round(float(vol_pct), 4) if vol_pct is not None else None,
+            'vrisk':         round(float(var_1d_95), 2) if var_1d_95 is not None else None,
+            'sharpeVol':     round(float(sharpe_vol), 4) if sharpe_vol is not None else None,
+            'sharpeVar':     round(float(sharpe_var), 4) if sharpe_var is not None else None,
+            'conc':          conc,
+            'risk_horizon':  p.get('risk_horizon'),
+            'risk_measure':  p.get('risk_measure'),
+            'base_currency': p.get('base_currency'),
+            'benchmark':     p.get('benchmark'),
+            'exp_return':    p.get('exp_return'),
         }
 
     result = [
-        _to_entry(row, weights_by_port.get(row[0], _NULL_WEIGHTS.copy()))
+        _to_entry(row, weights_by_port.get(row[0], _NULL_WEIGHTS.copy()), params_by_port.get(row[0]))
         for row in rows
     ]
     if account_row is not None:
-        result.insert(0, _to_entry(account_row, account_weights or _NULL_WEIGHTS.copy()))
+        result.insert(0, _to_entry(account_row, account_weights or _NULL_WEIGHTS.copy(), params_by_port.get(account_row[0])))
     return result
 
 

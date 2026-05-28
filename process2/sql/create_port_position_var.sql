@@ -73,12 +73,15 @@ CREATE TABLE port_position_var (
     spread_var               NUMERIC,
     gamma_var                NUMERIC,
     std                      NUMERIC,
-    marginal_std             NUMERIC,
-    var                      NUMERIC,
-    tvar                     NUMERIC,
-    marginal_var             NUMERIC,
-    marginal_tvar            NUMERIC,
-
+    mg_std                   NUMERIC,
+    var_95                   NUMERIC,
+    var_99                   NUMERIC,
+    es_95                    NUMERIC,
+    es_99                    NUMERIC,
+    mg_var_95                NUMERIC,
+    mg_var_99                NUMERIC,
+    mg_es_95                 NUMERIC,
+    mg_es_99                 NUMERIC,
     -- beta
     beta                     NUMERIC,
 

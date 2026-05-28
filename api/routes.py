@@ -710,6 +710,8 @@ from dashboard.positions_db import (
 from dashboard.concentration_db import read_concentrations
 from dashboard.stress_test import read_stress_results
 from dashboard.stress_scenarios import get_stress_scenarios as _get_stress_scenarios
+from dashboard.alternatives import get_alt_history, build_subclasses, get_alt_positions, get_alt_gauges
+from dashboard import security_level
 from dashboard.guage_data import build_gauge_data
 from dashboard.static_data import (
     RISK, FACTOR_EXPOSURES_V2, ASSET_ALLOCATION_DRILLDOWN,
@@ -910,12 +912,6 @@ def get_risk_summary(username):
         g = None
     response = {
         "measures": read_risk_measures(account_id),
-        "gaugeSharpe": {
-            "value":  g["sharpe_value"]  if g else 0.21,
-            "target": g["sharpe_target"] if g else 0.15,
-            "band":   g["sharpe_band"]   if g else 0.05,
-            "max":    g["sharpe_max"]    if g else 0.65,
-        },
         "gaugeRisk": {
             "value":        g["var_value"]         if g else 16_900_000,
             "limit":        g["var_limit"]         if g else 25_000_000,
@@ -923,6 +919,24 @@ def get_risk_summary(username):
             "readingValue": g["var_reading_value"] if g else "16.9",
             "readingUnit":  g["var_reading_unit"]  if g else "M",
             "targetLabel":  g["var_target_label"]  if g else "25.0M",
+        },
+        "gaugeSharpeVar": {
+            "value":  g["sharpe_var_value"]  if g else 0.21,
+            "target": g["sharpe_var_target"] if g else 0.25,
+            "band":   g["sharpe_var_band"]   if g else 0.05,
+            "max":    g["sharpe_var_max"]    if g else 0.85,
+        },
+        "gaugeVol": {
+            "value": g["vol_value"] if g else 10.0,
+            "bmk":   g["vol_bmk"]   if g else 7.5,
+            "band":  g["vol_band"]  if g else 0.5,
+            "max":   g["vol_max"]   if g else 12.75,
+        },
+        "gaugeSharpeVol": {
+            "value":  g["sharpe_vol_value"]  if g else 0.21,
+            "target": g["sharpe_vol_target"] if g else 0.25,
+            "band":   g["sharpe_vol_band"]   if g else 0.05,
+            "max":    g["sharpe_vol_max"]    if g else 0.85,
         },
     }
     return jsonify(response)
@@ -1051,6 +1065,59 @@ def get_var_history(username):
 def get_risk_factors(username):
     # Remains static until redesign
     return jsonify(FACTOR_EXPOSURES_V2)
+
+
+# ── Security Level page ────────────────────────────────────────────────────────
+
+@app.route("/api/security-level")
+@token_required
+def get_security_level(username):
+    account_id, err = _get_account_id(username=username)
+    if err:
+        return err
+    try:
+        data = security_level.get_security_level(account_id)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    return jsonify(data)
+
+
+# ── Alternatives page ──────────────────────────────────────────────────────────
+
+@app.route("/api/alternatives/summary")
+@token_required
+def get_alternatives_summary(username):
+    account_id, err = _get_account_id(username=username)
+    if err:
+        return err
+    try:
+        history = get_alt_history(account_id)
+    except Exception as e:
+        logger.error(f"get_alt_history failed for account_id={account_id}: {e}")
+        history = {"labels": [], "series": []}
+    try:
+        positions_raw = get_alt_positions(account_id)
+        alt_alloc     = build_subclasses(positions_raw)
+        subclasses    = alt_alloc["subclasses"]
+        drill         = alt_alloc["drill"]
+        positions     = positions_raw
+    except Exception as e:
+        logger.error(f"get_alt_positions failed for account_id={account_id}: {e}")
+        positions  = []
+        subclasses = []
+        drill      = {}
+    try:
+        gauges = get_alt_gauges(account_id)
+    except Exception as e:
+        logger.error(f"get_alt_gauges failed for account_id={account_id}: {e}")
+        gauges = {"var": {}, "sharpe": {}}
+    return jsonify({
+        "history":    history,
+        "subclasses": subclasses,
+        "drill":      drill,
+        "positions":  positions,
+        "gauges":     gauges,
+    })
 
 
 @app.route("/api/stress/scenarios")

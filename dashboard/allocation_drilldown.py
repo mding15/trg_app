@@ -10,7 +10,7 @@ _HERE = Path(__file__).parent
 
 
 def _fetch_positions(conn, account_id: int, as_of_date) -> pd.DataFrame:
-    """Fetch ticker, class, sc1, market_value, marginal_var from position_var."""
+    """Fetch ticker, class, sc1, market_value, mg_var_95 from position_var."""
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
         cur.execute(
             """
@@ -19,7 +19,7 @@ def _fetch_positions(conn, account_id: int, as_of_date) -> pd.DataFrame:
                 COALESCE(class,  '(unclassified)')          AS class,
                 COALESCE(sc1,    '(unclassified)')          AS sc1,
                 COALESCE(market_value,  0)                  AS market_value,
-                COALESCE(marginal_var,  0)                  AS marginal_var
+                COALESCE(mg_var_95,  0)                  AS mg_var_95
             FROM position_var
             WHERE account_id = %s
               AND as_of_date  = %s
@@ -62,7 +62,7 @@ def get_alloc_drilldown_data(account_id: int, as_of_date=None) -> dict:
     df['key2'] = "L2-" + df.groupby(['class', 'sc1'], sort=False).ngroup().astype(str)
 
     total_mv  = df['market_value'].sum()
-    total_var = df['marginal_var'].sum()
+    total_var = df['mg_var_95'].sum()
 
     def pct_mv(v):
         return float(round(v / total_mv  * 100, 2))
@@ -73,7 +73,7 @@ def get_alloc_drilldown_data(account_id: int, as_of_date=None) -> dict:
     ALLOC_DRILLDOWN = {}
 
     # ── Level "all": one row per asset class ──────────────────────────────────
-    df_class   = df.groupby('class', sort=False)[['market_value', 'marginal_var']].sum()
+    df_class   = df.groupby('class', sort=False)[['market_value', 'mg_var_95']].sum()
     class_key1 = df.drop_duplicates('class').set_index('class')['key1']
 
     all_rows = []
@@ -81,7 +81,7 @@ def get_alloc_drilldown_data(account_id: int, as_of_date=None) -> dict:
         all_rows.append({
             "label": cls,
             "mv":    pct_mv(row['market_value']),
-            "var":   pct_var(row['marginal_var']),
+            "var":   pct_var(row['mg_var_95']),
             "child": class_key1[cls],
         })
 
@@ -92,7 +92,7 @@ def get_alloc_drilldown_data(account_id: int, as_of_date=None) -> dict:
 
     # ── Level L1-X: one entry per class; rows = sc1 sub-classes ──────────────
     df_sc1 = (
-        df.groupby(['class', 'sc1', 'key1', 'key2'], sort=False)[['market_value', 'marginal_var']]
+        df.groupby(['class', 'sc1', 'key1', 'key2'], sort=False)[['market_value', 'mg_var_95']]
         .sum()
         .reset_index()
     )
@@ -106,7 +106,7 @@ def get_alloc_drilldown_data(account_id: int, as_of_date=None) -> dict:
             rows.append({
                 "label": row['sc1'],
                 "mv":    pct_mv(row['market_value']),
-                "var":   pct_var(row['marginal_var']),
+                "var":   pct_var(row['mg_var_95']),
                 "child": row['key2'],
             })
 
@@ -128,7 +128,7 @@ def get_alloc_drilldown_data(account_id: int, as_of_date=None) -> dict:
             rows.append({
                 "label": row['ticker'],
                 "mv":    pct_mv(row['market_value']),
-                "var":   pct_var(row['marginal_var']),
+                "var":   pct_var(row['mg_var_95']),
                 "child": None,
             })
 

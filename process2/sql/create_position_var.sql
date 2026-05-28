@@ -69,12 +69,6 @@ CREATE TABLE position_var (
     spread_var               NUMERIC,
     gamma_var                NUMERIC,
     std                      NUMERIC,
-    marginal_std             NUMERIC,
-    var                      NUMERIC,
-    tvar                     NUMERIC,
-    marginal_var             NUMERIC,
-    marginal_tvar            NUMERIC,
-
     -- metadata
     insert_time              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 

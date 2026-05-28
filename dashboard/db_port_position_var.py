@@ -62,11 +62,6 @@ _ENGINE_TO_DB = {
     'IR VaR':               'ir_var',
     'SPREAD VaR':           'spread_var',
     'GAMMA VaR':            'gamma_var',
-    'mg_std':               'marginal_std',
-    'var_95':               'var',
-    'es_95':                'tvar',
-    'mg_var_95':            'marginal_var',
-    'mg_es_95':             'marginal_tvar',
 }
 
 _NUMERIC_COLS = {
@@ -76,7 +71,7 @@ _NUMERIC_COLS = {
     'ir_tenor', 'yield', 'duration', 'convexity',
     'ir_pv01', 'sp_pv01', 'spread_duration', 'spread_convexity',
     'delta_var', 'ir_var', 'spread_var', 'gamma_var',
-    'std', 'marginal_std', 'var', 'tvar', 'marginal_var', 'marginal_tvar',
+    'std', 'mg_std', 'var_95', 'var_99', 'es_95', 'es_99', 'mg_var_95', 'mg_var_99', 'mg_es_95', 'mg_es_99',
     'beta',
 }
 
@@ -96,7 +91,7 @@ _TABLE_COLS = [
     'ir_tenor', 'yield', 'duration', 'convexity',
     'ir_pv01', 'sp_pv01', 'spread_duration', 'spread_convexity',
     'delta_var', 'ir_var', 'spread_var', 'gamma_var',
-    'std', 'marginal_std', 'var', 'tvar', 'marginal_var', 'marginal_tvar',
+    'std', 'mg_std', 'var_95', 'var_99', 'es_95', 'es_99', 'mg_var_95', 'mg_var_99', 'mg_es_95', 'mg_es_99',
     'beta',
 ]
 

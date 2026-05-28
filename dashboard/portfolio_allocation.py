@@ -53,7 +53,7 @@ def _fetch_flat_port(conn, port_id: int) -> pd.DataFrame:
                 COALESCE(sector,        '(unknown)')               AS sector,
                 COALESCE(currency,      '(unknown)')               AS currency,
                 COALESCE(market_value,  0)                         AS market_value,
-                COALESCE(marginal_tvar, 0)                         AS marginal_tvar
+                COALESCE(mg_es_95, 0)                         AS mg_es_95
             FROM port_position_var
             WHERE port_id = %s
             """,
@@ -64,7 +64,7 @@ def _fetch_flat_port(conn, port_id: int) -> pd.DataFrame:
         return pd.DataFrame()
     df = pd.DataFrame(rows)
     df['market_value']  = pd.to_numeric(df['market_value'],  errors='coerce').fillna(0.0)
-    df['marginal_tvar'] = pd.to_numeric(df['marginal_tvar'], errors='coerce').fillna(0.0)
+    df['mg_es_95'] = pd.to_numeric(df['mg_es_95'], errors='coerce').fillna(0.0)
     return df
 
 
@@ -83,7 +83,7 @@ def _fetch_flat(conn, account_id: int, as_of_date) -> pd.DataFrame:
                 COALESCE(sector,        '(unknown)')               AS sector,
                 COALESCE(currency,      '(unknown)')               AS currency,
                 COALESCE(market_value,  0)                         AS market_value,
-                COALESCE(marginal_tvar, 0)                         AS marginal_tvar
+                COALESCE(mg_es_95, 0)                         AS mg_es_95
             FROM position_var
             WHERE account_id = %s AND as_of_date = %s
             """,
@@ -94,7 +94,7 @@ def _fetch_flat(conn, account_id: int, as_of_date) -> pd.DataFrame:
         return pd.DataFrame()
     df = pd.DataFrame(rows)
     df['market_value']  = pd.to_numeric(df['market_value'],  errors='coerce').fillna(0.0)
-    df['marginal_tvar'] = pd.to_numeric(df['marginal_tvar'], errors='coerce').fillna(0.0)
+    df['mg_es_95'] = pd.to_numeric(df['mg_es_95'], errors='coerce').fillna(0.0)
     return df
 
 
@@ -146,14 +146,14 @@ def _build_slice(
     dim4  → L4 label column (leaf), or None if only three levels
     """
     total_mv  = float(df['market_value'].sum())
-    total_var = float(df['marginal_tvar'].sum())
+    total_var = float(df['mg_es_95'].sum())
 
     levels:   dict = {}
     holdings: dict = {}
 
     # ── L1 aggregation ────────────────────────────────────────────────────────
     df1 = (
-        df.groupby(dim1, sort=False)[['market_value', 'marginal_tvar']]
+        df.groupby(dim1, sort=False)[['market_value', 'mg_es_95']]
         .sum()
         .reset_index()
     )
@@ -168,7 +168,7 @@ def _build_slice(
         all_rows.append({
             "label": label,
             "mv":    _pct_of(float(row['market_value']), total_mv),
-            "var":   _pct_of(float(row['marginal_tvar']), total_var),
+            "var":   _pct_of(float(row['mg_es_95']), total_var),
             "child": key1_map[label],
         })
     levels["all"] = {
@@ -190,7 +190,7 @@ def _build_slice(
 
     # ── L2 aggregation ────────────────────────────────────────────────────────
     df12 = (
-        df.groupby([dim1, dim2], sort=False)[['market_value', 'marginal_tvar']]
+        df.groupby([dim1, dim2], sort=False)[['market_value', 'mg_es_95']]
         .sum()
         .reset_index()
     )
@@ -201,7 +201,7 @@ def _build_slice(
     for dim1_val, key1 in key1_map.items():
         subset1 = df12[df12[dim1] == dim1_val]
         sub_mv  = float(subset1['market_value'].sum())
-        sub_var = float(subset1['marginal_tvar'].sum())
+        sub_var = float(subset1['mg_es_95'].sum())
 
         l2_rows = []
         for _, row in subset1.iterrows():
@@ -210,7 +210,7 @@ def _build_slice(
             l2_rows.append({
                 "label": dim2_val,
                 "mv":    _pct_of(float(row['market_value']), sub_mv),
-                "var":   _pct_of(float(row['marginal_tvar']), sub_var),
+                "var":   _pct_of(float(row['mg_es_95']), sub_var),
                 "child": child,
             })
         levels[key1] = {
@@ -233,7 +233,7 @@ def _build_slice(
     # ── L3 aggregation ────────────────────────────────────────────────────────
     if dim3:
         df123 = (
-            df.groupby([dim1, dim2, dim3], sort=False)[['market_value', 'marginal_tvar']]
+            df.groupby([dim1, dim2, dim3], sort=False)[['market_value', 'mg_es_95']]
             .sum()
             .reset_index()
         )
@@ -245,7 +245,7 @@ def _build_slice(
         for (dim1_val, dim2_val), key2 in key2_map.items():
             subset2 = df123[(df123[dim1] == dim1_val) & (df123[dim2] == dim2_val)]
             sub_mv  = float(subset2['market_value'].sum())
-            sub_var = float(subset2['marginal_tvar'].sum())
+            sub_var = float(subset2['mg_es_95'].sum())
 
             l3_rows = []
             for _, row in subset2.iterrows():
@@ -254,7 +254,7 @@ def _build_slice(
                 l3_rows.append({
                     "label": dim3_val,
                     "mv":    _pct_of(float(row['market_value']), sub_mv),
-                    "var":   _pct_of(float(row['marginal_tvar']), sub_var),
+                    "var":   _pct_of(float(row['mg_es_95']), sub_var),
                     "child": child,
                 })
             levels[key2] = {
@@ -278,7 +278,7 @@ def _build_slice(
         # ── L4 aggregation ────────────────────────────────────────────────────
         if dim4:
             df1234 = (
-                df.groupby([dim1, dim2, dim3, dim4], sort=False)[['market_value', 'marginal_tvar']]
+                df.groupby([dim1, dim2, dim3, dim4], sort=False)[['market_value', 'mg_es_95']]
                 .sum()
                 .reset_index()
             )
@@ -290,14 +290,14 @@ def _build_slice(
                     (df1234[dim3] == dim3_val)
                 ]
                 sub_mv  = float(subset3['market_value'].sum())
-                sub_var = float(subset3['marginal_tvar'].sum())
+                sub_var = float(subset3['mg_es_95'].sum())
 
                 l4_rows = []
                 for _, row in subset3.iterrows():
                     l4_rows.append({
                         "label": row[dim4],
                         "mv":    _pct_of(float(row['market_value']), sub_mv),
-                        "var":   _pct_of(float(row['marginal_tvar']), sub_var),
+                        "var":   _pct_of(float(row['mg_es_95']), sub_var),
                         "child": None,
                     })
                 levels[key3] = {

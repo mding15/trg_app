@@ -85,7 +85,21 @@ def process_input(params, positions, limit):
     # convert params to dict
     params.index = params.iloc[:,0].apply(lambda x: x.replace(' ', ''))
     params = params.iloc[:,1].to_dict()
-    
+
+    # standardize parameter values
+    _RISK_HORIZON_MAP = {
+        '1 Day': '1D', '1 Month': '1M', 'Month': '1M',
+        '1 Quarter': '1Q', 'Quarter': '1Q', '1 Year': '1Y', 'Year': '1Y',
+    }
+    _TAIL_MEASURE_MAP = {
+        '95% TailVaR': 'ES 95%', '99% TailVaR': 'ES 99%',
+        '95% VaR': 'VaR 95%',   '99% VaR': 'VaR 99%',
+    }
+    if 'RiskHorizon' in params:
+        params['RiskHorizon'] = _RISK_HORIZON_MAP.get(params['RiskHorizon'], params['RiskHorizon'])
+    if 'TailMeasure' in params:
+        params['TailMeasure'] = _TAIL_MEASURE_MAP.get(params['TailMeasure'], params['TailMeasure'])
+
     # check input file against template
     check_against_template(params, positions)
 

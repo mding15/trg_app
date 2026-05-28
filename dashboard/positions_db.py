@@ -75,7 +75,7 @@ def write_portfolio_summary(account_id: int, summary: dict) -> None:
             (account_id, as_of_date, aum, num_positions, day_pnl,
              day_return, mtd_return, ytd_return, one_year_return,
              unrealized_gain, var_1d_95, var_1d_99, var_10d_99,
-             es_1d_95, es_99,
+             es_1d_95, es_1d_99,
              volatility, sharpe_vol, sharpe_var, beta, max_drawdown, top_five_conc,
              three_year_return, si_return, updated_at)
         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s,
@@ -95,7 +95,7 @@ def write_portfolio_summary(account_id: int, summary: dict) -> None:
             var_1d_99         = EXCLUDED.var_1d_99,
             var_10d_99        = EXCLUDED.var_10d_99,
             es_1d_95          = EXCLUDED.es_1d_95,
-            es_99             = EXCLUDED.es_99,
+            es_1d_99          = EXCLUDED.es_1d_99,
             volatility        = EXCLUDED.volatility,
             sharpe_vol        = EXCLUDED.sharpe_vol,
             sharpe_var        = EXCLUDED.sharpe_var,
@@ -285,7 +285,7 @@ def read_portfolio_summary(account_id: int) -> dict:
         SELECT as_of_date, aum, num_positions, day_pnl, day_return,
                mtd_return, ytd_return, one_year_return,
                unrealized_gain, var_1d_95, var_1d_99, var_10d_99,
-               es_1d_95, es_99,
+               es_1d_95, es_1d_99,
                volatility, sharpe_vol, sharpe_var, beta, max_drawdown, top_five_conc,
                three_year_return, si_return
         FROM db_portfolio_summary
@@ -560,6 +560,19 @@ def read_var_limit(account_id):
     return float(row[0]) if row and row[0] is not None else None
 
 
+def read_account_limit_multi(account_id, categories):
+    """Return {limit_category: float} for the given categories in a single query."""
+    with pg_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT limit_category, limit_value FROM account_limit "
+                "WHERE account_id = %s AND limit_category = ANY(%s)",
+                (account_id, list(categories)),
+            )
+            rows = cur.fetchall()
+    return {row[0]: float(row[1]) for row in rows if row[1] is not None}
+
+
 # ── Risk page parameters ──────────────────────────────────────────────────────
 
 def read_risk_parameters(account_id: int) -> list[dict]:
@@ -613,7 +626,7 @@ def read_risk_parameters(account_id: int) -> list[dict]:
 def read_risk_measures(account_id: int) -> list[dict]:
     """Return the four Risk Measures tiles from the latest db_portfolio_summary row."""
     sql = """
-        SELECT aum, es_1d_95, volatility, beta
+        SELECT var_1d_95, es_1d_95, volatility, beta
         FROM db_portfolio_summary
         WHERE account_id = %s
         ORDER BY as_of_date DESC
@@ -624,11 +637,8 @@ def read_risk_measures(account_id: int) -> list[dict]:
             cur.execute(sql, (account_id,))
             row = cur.fetchone()
 
-    def _mm(v):
-        return str(round(float(v) / 1e6, 1)) if v is not None else "—"
-
-    def _es(v):
-        """Format ES value: K if <1M, 0.0M if 1M–10M, 0M if >=10M."""
+    def _dollar(v):
+        """Format dollar value: K if <1M, 0.0M if 1M–10M, 0M if >=10M."""
         if v is None:
             return "—", None
         f = float(v)
@@ -645,18 +655,19 @@ def read_risk_measures(account_id: int) -> list[dict]:
     def _ratio(v):
         return str(round(float(v), 2)) if v is not None else "—"
 
-    aum      = row[0] if row else None
-    es_1d_95 = row[1] if row else None
-    vol      = row[2] if row else None
-    beta     = row[3] if row else None
+    var_1d_95 = row[0] if row else None
+    es_1d_95  = row[1] if row else None
+    vol       = row[2] if row else None
+    beta      = row[3] if row else None
 
-    es_value, es_unit = _es(es_1d_95)
+    var_value, var_unit = _dollar(var_1d_95)
+    es_value,  es_unit  = _dollar(es_1d_95)
 
     return [
-        {"label": "Market Value", "value": _mm(aum),    "unit": "M",     "sub": None},
-        {"label": "ES 95% 1D",   "value": es_value,     "unit": es_unit, "sub": None},
-        {"label": "Volatility",  "value": _pct(vol),    "unit": "%",     "sub": "annualised"},
-        {"label": "Beta",        "value": _ratio(beta), "unit": None,    "sub": "vs S&P 500"},
+        {"label": "VaR 95% 1D",  "value": var_value,    "unit": var_unit, "sub": None},
+        {"label": "ES 95% 1D",   "value": es_value,      "unit": es_unit,  "sub": None},
+        {"label": "Volatility",  "value": _pct(vol),     "unit": "%",      "sub": "annualised"},
+        {"label": "Beta",        "value": _ratio(beta),  "unit": None,     "sub": "vs S&P 500"},
     ]
 
 

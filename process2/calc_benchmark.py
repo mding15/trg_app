@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import math
 import sys
 from datetime import date, datetime
 from pathlib import Path
@@ -30,7 +31,8 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from database2 import get_proc_asof_date, pg_connection
 
-FILL_WINDOW = 5  # business days for fill-forward price lookup
+FILL_WINDOW = 5    # business days for fill-forward price lookup
+ANNUALIZE   = 252  # trading days per year
 
 
 # ── Logging ───────────────────────────────────────────────────────────────────
@@ -136,6 +138,62 @@ def _upsert_hist(benchmark_id: int, d: date, value: float) -> None:
         conn.commit()
 
 
+def _get_rf_rate() -> float:
+    """Return annualised risk-free rate from stat_static_data; default 0.02."""
+    df = _fetch(
+        'SELECT "Value" FROM stat_static_data WHERE "Name" = %s LIMIT 1',
+        ("Riskfree Rate",),
+    )
+    return float(df.iloc[0, 0]) if not df.empty else 0.02
+
+
+def _get_expect_return(benchmark_id: int) -> float | None:
+    """Return annualised expected return for the benchmark, or None if not set."""
+    df = _fetch(
+        "SELECT expect_return FROM benchmark WHERE benchmark_id = %s",
+        (benchmark_id,),
+    )
+    if df.empty or df.iloc[0, 0] is None:
+        return None
+    return float(df.iloc[0, 0])
+
+
+def _get_benchmark_returns(benchmark_id: int, calc_date: date, n: int = 253) -> pd.Series | None:
+    """Return up to (n-1) daily returns from benchmark_hist ending at calc_date."""
+    df = _fetch(
+        "SELECT date, value FROM benchmark_hist "
+        "WHERE benchmark_id = %s AND date <= %s ORDER BY date DESC LIMIT %s",
+        (benchmark_id, calc_date, n),
+    )
+    if len(df) < 2:
+        return None
+    df = df.sort_values("date").reset_index(drop=True)
+    return df["value"].pct_change().dropna().reset_index(drop=True)
+
+
+def _upsert_metrics(
+    benchmark_id: int, d: date,
+    volatility: float, var_1d_95: float, es_1d_95: float,
+    var_1d_99: float, es_1d_99: float,
+    sharpe_vol: float | None, sharpe_var: float | None,
+) -> None:
+    with pg_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "DELETE FROM benchmark_metrics WHERE benchmark_id = %s AND date = %s",
+                (benchmark_id, d),
+            )
+            cur.execute(
+                "INSERT INTO benchmark_metrics "
+                "(benchmark_id, date, volatility, var_1d_95, es_1d_95, "
+                " var_1d_99, es_1d_99, sharpe_vol, sharpe_var) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                (benchmark_id, d, volatility, var_1d_95, es_1d_95,
+                 var_1d_99, es_1d_99, sharpe_vol, sharpe_var),
+            )
+        conn.commit()
+
+
 # ── Return calculators ────────────────────────────────────────────────────────
 
 def _proxy_return(
@@ -184,6 +242,58 @@ def _internal_return(
         log.warning(f"  [{bm_name}] total weight is zero — skipping")
         return None
     return weighted_sum / total_weight
+
+
+# ── Metrics ───────────────────────────────────────────────────────────────────
+
+def run_metrics(calc_date: date, log: logging.Logger) -> None:
+    """Calculate and store risk metrics for all active benchmarks as of calc_date."""
+    from utils.var_utils import calc_VaR, calc_tVaR  # lazy import: avoids HDF5 side-effects at module load
+
+    rf_rate = _get_rf_rate()
+    log.info(f"[metrics] rf_rate={rf_rate:.4f}  calc_date={calc_date}")
+
+    benchmarks = _get_active_benchmarks()
+    ok = skipped = 0
+
+    for _, bm in benchmarks.iterrows():
+        bid  = int(bm["benchmark_id"])
+        name = bm["benchmark_name"]
+
+        returns = _get_benchmark_returns(bid, calc_date)
+        if returns is None or len(returns) < ANNUALIZE:
+            n_obs = len(returns) if returns is not None else 0
+            log.warning(f"  [{name}] insufficient history ({n_obs} obs, need {ANNUALIZE}) — skipping metrics")
+            skipped += 1
+            continue
+
+        # Build single-column DataFrame expected by calc_VaR / calc_tVaR
+        col = str(bid)
+        pl  = pd.DataFrame({col: returns})
+
+        vol    = float(returns.std() * math.sqrt(ANNUALIZE))
+        var_95 = float(calc_VaR(pl,  CL=0.95)["VaR"].iloc[0])
+        es_95  = float(calc_tVaR(pl, CL=0.95)["tVaR"].iloc[0])
+        var_99 = float(calc_VaR(pl,  CL=0.99)["VaR"].iloc[0])
+        es_99  = float(calc_tVaR(pl, CL=0.99)["tVaR"].iloc[0])
+
+        expect_return = _get_expect_return(bid)
+        if expect_return is not None:
+            excess        = expect_return - rf_rate
+            sharpe_vol    = excess / vol if vol else None
+            var_annualised = var_95 * math.sqrt(ANNUALIZE)
+            sharpe_var    = excess / var_annualised if var_annualised else None
+        else:
+            sharpe_vol = sharpe_var = None
+
+        _upsert_metrics(bid, calc_date, vol, var_95, es_95, var_99, es_99, sharpe_vol, sharpe_var)
+        log.info(
+            f"  [{name}] vol={vol:.4f}  var95={var_95:.6f}  es95={es_95:.6f}"
+            f"  sharpe_vol={sharpe_vol}  sharpe_var={sharpe_var}"
+        )
+        ok += 1
+
+    log.info(f"[metrics] Done.  calculated={ok}  skipped={skipped}")
 
 
 # ── Core ──────────────────────────────────────────────────────────────────────
@@ -271,6 +381,8 @@ def run(calc_date: date, log: logging.Logger) -> None:
 
     log.info("─" * 60)
     log.info(f"Done.  calculated={ok}  skipped={skipped}")
+
+    run_metrics(calc_date, log)
 
 
 # ── CLI ───────────────────────────────────────────────────────────────────────

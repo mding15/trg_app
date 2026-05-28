@@ -16,8 +16,9 @@ Arguments:
     table       Target database table name                (required, positional)
 
 Options:
-    --key       Key column(s) for the WHERE clause, colon-separated (required)
+    --key       Key column(s) for the WHERE clause, colon-separated (optional)
                 e.g. --key SecurityID  or  --key SecurityID:Date
+                If omitted, the first column of the Excel sheet is used.
     --file      Excel filename inside maintenance/Excel/  (default: <table>.xlsx)
     --sheet     Sheet name to read                        (default: <table>)
     --dry-run   Preview rows and column mapping without writing to DB
@@ -52,12 +53,14 @@ def _setup_logger() -> logging.Logger:
 
 
 def _clean(val):
-    """Convert pandas NaN / NaT / None → Python None for psycopg2."""
+    """Convert pandas NaN / NaT / None → Python None; numpy scalars → Python natives."""
     try:
         if pd.isna(val):
             return None
     except (TypeError, ValueError):
         pass
+    if hasattr(val, "item"):  # np.float64, np.int64, etc.
+        return val.item()
     return val
 
 
@@ -129,6 +132,11 @@ def run(file: str | None, sheet: str | None, table: str, key_cols: list[str], dr
         return
 
     log.info(f"  {len(df)} rows · {len(df.columns)} columns")
+
+    # ── Default key to first column if not specified ──────────────────────────
+    if not key_cols:
+        key_cols = [str(df.columns[0])]
+        log.info(f"  --key not specified — using first column as key: '{key_cols[0]}'")
 
     # ── Fetch DB columns ──────────────────────────────────────────────────────
     log.info(f"Fetching columns for table '{table}' from database …")
@@ -235,8 +243,8 @@ def main() -> None:
     )
     parser.add_argument("table",     metavar="TABLE",
                         help="Target database table name")
-    parser.add_argument("--key",     required=True, metavar="COL[:COL...]",
-                        help="Key column(s) for the WHERE clause, colon-separated (e.g. SecurityID or SecurityID:Date)")
+    parser.add_argument("--key",     default=None, metavar="COL[:COL...]",
+                        help="Key column(s) for the WHERE clause, colon-separated (e.g. SecurityID or SecurityID:Date). Defaults to the first column of the Excel sheet.")
     parser.add_argument("--file",    default=None, metavar="FILENAME",
                         help="Excel filename inside maintenance/Excel/ (default: <table>.xlsx)")
     parser.add_argument("--sheet",   default=None, metavar="SHEET",
@@ -245,9 +253,7 @@ def main() -> None:
                         help="Preview column mapping and sample rows without writing to DB")
     args = parser.parse_args()
 
-    key_cols = [k.strip() for k in args.key.split(":") if k.strip()]
-    if not key_cols:
-        parser.error("--key must specify at least one column name.")
+    key_cols = [k.strip() for k in args.key.split(":") if k.strip()] if args.key else []
 
     run(args.file, args.sheet, args.table, key_cols, args.dry_run)
 

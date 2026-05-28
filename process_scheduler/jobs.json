@@ -26,6 +26,19 @@
     "enabled": true,
     "venv_path": null
   },
+{
+    "id": "pnl_alternative_unadj",
+    "name": "Alternative Unadj PnL",
+    "description": "Calculates PnL for alternative unadjusted vol",
+    "script_path": "api/trgapp/process2/calc_unadj_alt_pnl.py",
+    "script_type": "python",
+    "schedule_time": null,
+    "dependencies": ["pnl_linear_prod", "pnl_bond", "pnl_treasury"],
+    "max_retries": 2,
+    "retry_delay_seconds": 60,
+    "enabled": true,
+    "venv_path": null
+  },
 
   {
     "id": "pnl_bond",
@@ -126,10 +139,10 @@
   },
 
   {
-    "id": "calculate_var",
-    "name": "Calculate VaR",
-    "description": "Calculate VAR for all accounts.",
-    "script_path": "api/trgapp/process_scheduler/calculate_var.py",
+    "id": "consolidate_positions",
+    "name": " Consolidate Positions",
+    "description": "Create consolidated portfolios for parent accounts.",
+    "script_path": "api/trgapp/process2/populate_parent_positions.py",
     "script_type": "python",
     "schedule_time": null,
     "dependencies": ["mssb_preprocess", "tracked_proc", "test_bed"],
@@ -138,6 +151,34 @@
     "enabled": true,
     "venv_path": null
   },
+  {
+    "id": "calculate_var",
+    "name": "Calculate VaR",
+    "description": "Calculate VAR for all accounts.",
+    "script_path": "api/trgapp/process_scheduler/calculate_var.py",
+    "script_type": "python",
+    "schedule_time": null,
+    "dependencies": ["consolidate_positions"],
+    "max_retries": 2,
+    "retry_delay_seconds": 60,
+    "enabled": true,
+    "venv_path": null
+  },
+
+  {
+    "id": "alternative_var",
+    "name": "Calculate Alternative VaR",
+    "description": "Calculate VaR for alternative positions.",
+    "script_path": "api/trgapp/process2/calc_alternative_var.py",
+    "script_type": "python",
+    "schedule_time": null,
+    "dependencies": ["calculate_var"],
+    "max_retries": 2,
+    "retry_delay_seconds": 60,
+    "enabled": true,
+    "venv_path": null
+  },
+
   {
     "id": "yh_eod_price",
     "name": "YH EOD Price",

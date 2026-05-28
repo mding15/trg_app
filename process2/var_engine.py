@@ -70,14 +70,14 @@ def _load_positions(account_id: int, as_of_date) -> pd.DataFrame:
 
 # ── HDF helper ─────────────────────────────────────────────────────────────────
 
-def _load_security_pnl(security_ids: list[str]) -> pd.DataFrame:
+def _load_security_pnl(security_ids: list[str], category: str = PNL_CATEGORY) -> pd.DataFrame:
     """Read PnL distribution matrix (scenarios × securities) from security_pnl.h5."""
-    return hdf_utils.read(security_ids, PNL_CATEGORY, PNL_FILE)
+    return hdf_utils.read(security_ids, category, PNL_FILE)
 
 
 # ── Core calculation ───────────────────────────────────────────────────────────
 
-def calc_var(positions: pd.DataFrame) -> pd.DataFrame:
+def calc_var(positions: pd.DataFrame, category: str = PNL_CATEGORY) -> pd.DataFrame:
     """
     Calculate VaR and risk metrics for each position.
 
@@ -86,6 +86,9 @@ def calc_var(positions: pd.DataFrame) -> pd.DataFrame:
     positions : DataFrame
         Must contain columns: pos_id, SecurityID, MarketValue.
         pos_id must be a plain column (not the index).
+    category : str
+        HDF category to load distributions from (default: 'PNL').
+        Pass 'ALT' to use unadjusted alternative distributions.
 
     Returns
     -------
@@ -103,7 +106,7 @@ def calc_var(positions: pd.DataFrame) -> pd.DataFrame:
 
     # Load PnL distributions for all unique securities in one read
     security_ids = positions['SecurityID'].dropna().unique().tolist()
-    sec_pnl = _load_security_pnl(security_ids)   # scenarios × SecurityIDs
+    sec_pnl = _load_security_pnl(security_ids, category)   # scenarios × SecurityIDs
 
     # Build position PnL matrix (only positions with available data)
     pos_pnl_cols = {}

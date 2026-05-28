@@ -402,3 +402,263 @@ CREATE TABLE public.st_account_summary (
   CONSTRAINT uq_st_account_summary UNIQUE (account_id, as_of_date, scenario_id),
   FOREIGN KEY (scenario_id) REFERENCES public.st_scenarios (scenario_id)
 );
+
+-- ---------------------------------------------------------------
+-- benchmark_metrics  (daily risk metrics per benchmark)
+-- Populated by process2/calc_benchmark.py (run_metrics).
+-- ---------------------------------------------------------------
+CREATE TABLE public.benchmark_metrics (
+    benchmark_id  INTEGER   NOT NULL,
+    date          DATE      NOT NULL,
+    volatility    NUMERIC,          -- annualised (sqrt(252) * daily std)
+    var_1d_95     NUMERIC,          -- 1-day 95% VaR, positive loss
+    es_1d_95      NUMERIC,          -- 1-day 95% ES (CVaR), positive loss
+    var_1d_99     NUMERIC,          -- 1-day 99% VaR, positive loss
+    es_1d_99      NUMERIC,          -- 1-day 99% ES (CVaR), positive loss
+    sharpe_vol    NUMERIC,          -- (expect_return - rf) / volatility
+    sharpe_var    NUMERIC,          -- (expect_return - rf) / (var_1d_95 * sqrt(252))
+    updated_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT benchmark_metrics_pkey PRIMARY KEY (benchmark_id, date)
+);
+
+CREATE TABLE public.stat_static_data (
+	"Name" varchar(50) NULL,
+	"Value" float4 NULL
+);
+
+-- ---------------------------------------------------------------
+-- alternative_model  (illiquidity / proxy model per alternative security)
+-- Sourced from work/Alternative.xlsx sheet "model".
+-- ---------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS public.alternative_model (
+    security_id    VARCHAR(50)  NOT NULL,
+    security_name  VARCHAR(500) NULL,
+    asset_subclass VARCHAR(100) NULL,
+    proxy_name     VARCHAR(200) NULL,
+    proxy_id       VARCHAR(50)  NULL,
+    proxy_correl   FLOAT        NULL,
+    unadj_vol      FLOAT        NULL,
+    adj_vol        FLOAT        NULL,
+    liq_adj        FLOAT        NULL,    -- liquidity adjustment factor (adj_vol / unadj_vol)
+    proxy_vol      FLOAT        NULL,
+    beta           FLOAT        NULL,
+    sigma          FLOAT        NULL,    -- idiosyncratic vol
+    r_sq           FLOAT        NULL,   -- R-squared; source column name was "r-sq"
+    updated_at     TIMESTAMP    NOT NULL DEFAULT NOW(),
+    CONSTRAINT alternative_model_pkey PRIMARY KEY (security_id)
+);
+
+-- ---------------------------------------------------------------
+-- alternative_var  (VaR metrics per alternative position × account × date)
+-- Populated by process2/calc_alternative_var.py.
+-- ---------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS public.alternative_var (
+    account_id      INTEGER      NOT NULL,
+    as_of_date      DATE         NOT NULL,
+    pos_id          VARCHAR(50)  NOT NULL,
+    security_id     VARCHAR(50)  NOT NULL,
+    market_value    FLOAT        NULL,
+    -- liquidity-adjusted metrics
+    std             FLOAT        NULL,
+    mg_std          FLOAT        NULL,
+    var_95          FLOAT        NULL,
+    var_99          FLOAT        NULL,
+    es_95           FLOAT        NULL,
+    es_99           FLOAT        NULL,
+    mg_var_95       FLOAT        NULL,
+    mg_var_99       FLOAT        NULL,
+    mg_es_95        FLOAT        NULL,
+    mg_es_99        FLOAT        NULL,
+    -- unadjusted metrics
+    unadj_std       FLOAT        NULL,
+    unadj_mg_std    FLOAT        NULL,
+    unadj_var_95    FLOAT        NULL,
+    unadj_var_99    FLOAT        NULL,
+    unadj_es_95     FLOAT        NULL,
+    unadj_es_99     FLOAT        NULL,
+    unadj_mg_var_95 FLOAT        NULL,
+    unadj_mg_var_99 FLOAT        NULL,
+    unadj_mg_es_95  FLOAT        NULL,
+    unadj_mg_es_99  FLOAT        NULL,
+    updated_at      TIMESTAMP    NOT NULL DEFAULT NOW(),
+    CONSTRAINT alternative_var_pkey PRIMARY KEY (account_id, as_of_date, pos_id)
+);
+-- Migration (run once against live DB):
+-- ALTER TABLE alternative_var ADD COLUMN IF NOT EXISTS market_value    FLOAT NULL;
+-- ALTER TABLE alternative_var ADD COLUMN IF NOT EXISTS unadj_std       FLOAT NULL;
+-- ALTER TABLE alternative_var ADD COLUMN IF NOT EXISTS unadj_mg_std    FLOAT NULL;
+-- ALTER TABLE alternative_var ADD COLUMN IF NOT EXISTS unadj_var_95    FLOAT NULL;
+-- ALTER TABLE alternative_var ADD COLUMN IF NOT EXISTS unadj_var_99    FLOAT NULL;
+-- ALTER TABLE alternative_var ADD COLUMN IF NOT EXISTS unadj_es_95     FLOAT NULL;
+-- ALTER TABLE alternative_var ADD COLUMN IF NOT EXISTS unadj_es_99     FLOAT NULL;
+-- ALTER TABLE alternative_var ADD COLUMN IF NOT EXISTS unadj_mg_var_95 FLOAT NULL;
+-- ALTER TABLE alternative_var ADD COLUMN IF NOT EXISTS unadj_mg_var_99 FLOAT NULL;
+-- ALTER TABLE alternative_var ADD COLUMN IF NOT EXISTS unadj_mg_es_95  FLOAT NULL;
+-- ALTER TABLE alternative_var ADD COLUMN IF NOT EXISTS unadj_mg_es_99  FLOAT NULL;
+
+
+CREATE TABLE public.position_var (
+	as_of_date date NOT NULL,
+	account_id int4 NOT NULL,
+	pos_id text NOT NULL,
+	security_id text NULL,
+	security_name text NULL,
+	isin text NULL,
+	cusip text NULL,
+	ticker text NULL,
+	broker_account text NULL,
+	quantity numeric NULL,
+	market_value numeric NULL,
+	weight numeric NULL,
+	currency text NULL,
+	last_price numeric NULL,
+	last_price_date date NULL,
+	asset_class text NULL,
+	asset_type text NULL,
+	"class" text NULL,
+	sc1 text NULL,
+	sc2 text NULL,
+	country text NULL,
+	region text NULL,
+	sector text NULL,
+	industry text NULL,
+	rating text NULL,
+	pd numeric NULL,
+	expected_return numeric NULL,
+	coupon_rate numeric NULL,
+	option_type text NULL,
+	option_strike numeric NULL,
+	payment_frequency text NULL,
+	maturity_date date NULL,
+	underlying_security_id text NULL,
+	underlying_id text NULL,
+	underlying_price numeric NULL,
+	is_option bool NULL,
+	excluded bool NULL,
+	exclude_reason text NULL,
+	risk_free_rate numeric NULL,
+	tenor numeric NULL,
+	delta numeric NULL,
+	gamma numeric NULL,
+	vega numeric NULL,
+	iv numeric NULL,
+	ir_tenor numeric NULL,
+	yield numeric NULL,
+	duration numeric NULL,
+	convexity numeric NULL,
+	ir_pv01 numeric NULL,
+	sp_pv01 numeric NULL,
+	spread_duration numeric NULL,
+	spread_convexity numeric NULL,
+	delta_var numeric NULL,
+	ir_var numeric NULL,
+	spread_var numeric NULL,
+	gamma_var numeric NULL,
+	vega_var numeric NULL,
+	ir_duration_var numeric NULL,
+	ir_convexity_var numeric NULL,
+	sp_duration_var numeric NULL,
+	sp_convexity_var numeric NULL,
+	default_var numeric NULL,
+	skewness numeric NULL,
+	kurtosis numeric NULL,
+	vol numeric NULL,
+	std numeric NULL,
+	insert_time timestamptz DEFAULT now() NOT NULL,
+	broker text NULL,
+	beta float8 NULL,
+	total_cost numeric NULL,
+	mg_std numeric NULL,
+	var_95 numeric NULL,
+	var_99 numeric NULL,
+	es_95 numeric NULL,
+	es_99 numeric NULL,
+	mg_var_95 numeric NULL,
+	mg_var_99 numeric NULL,
+	mg_es_95 numeric NULL,
+	mg_es_99 numeric NULL,
+	CONSTRAINT position_var_pkey PRIMARY KEY (as_of_date, account_id, pos_id)
+);
+
+CREATE TABLE public.port_position_var (
+	port_id int4 NOT NULL,
+	pos_id text NOT NULL,
+	as_of_date date NULL,
+	security_id text NULL,
+	security_name text NULL,
+	isin text NULL,
+	cusip text NULL,
+	ticker text NULL,
+	broker_account text NULL,
+	quantity numeric NULL,
+	market_value numeric NULL,
+	weight numeric NULL,
+	currency text NULL,
+	last_price numeric NULL,
+	last_price_date date NULL,
+	asset_class text NULL,
+	asset_type text NULL,
+	"class" text NULL,
+	sc1 text NULL,
+	sc2 text NULL,
+	country text NULL,
+	region text NULL,
+	sector text NULL,
+	industry text NULL,
+	rating text NULL,
+	pd numeric NULL,
+	expected_return numeric NULL,
+	coupon_rate numeric NULL,
+	option_type text NULL,
+	option_strike numeric NULL,
+	payment_frequency text NULL,
+	maturity_date date NULL,
+	underlying_security_id text NULL,
+	underlying_id text NULL,
+	underlying_price numeric NULL,
+	is_option bool NULL,
+	excluded bool NULL,
+	exclude_reason text NULL,
+	risk_free_rate numeric NULL,
+	tenor numeric NULL,
+	delta numeric NULL,
+	gamma numeric NULL,
+	vega numeric NULL,
+	iv numeric NULL,
+	ir_tenor numeric NULL,
+	yield numeric NULL,
+	duration numeric NULL,
+	convexity numeric NULL,
+	ir_pv01 numeric NULL,
+	sp_pv01 numeric NULL,
+	spread_duration numeric NULL,
+	spread_convexity numeric NULL,
+	delta_var numeric NULL,
+	ir_var numeric NULL,
+	spread_var numeric NULL,
+	gamma_var numeric NULL,
+	vega_var numeric NULL,
+	ir_duration_var numeric NULL,
+	ir_convexity_var numeric NULL,
+	sp_duration_var numeric NULL,
+	sp_convexity_var numeric NULL,
+	default_var numeric NULL,
+	skewness numeric NULL,
+	kurtosis numeric NULL,
+	vol numeric NULL,
+	std numeric NULL,
+	beta numeric NULL,
+	insert_time timestamptz DEFAULT now() NOT NULL,
+	total_cost numeric NULL,
+	mg_std numeric NULL,
+	var_95 numeric NULL,
+	es_95 numeric NULL,
+	mg_var_95 numeric NULL,
+	mg_es_95 numeric NULL,
+	var_99 numeric NULL,
+	es_99 numeric NULL,
+	mg_var_99 numeric NULL,
+	mg_es_99 numeric NULL,
+	CONSTRAINT port_position_var_pkey PRIMARY KEY (port_id, pos_id),
+	CONSTRAINT port_position_var_port_id_fkey FOREIGN KEY (port_id) REFERENCES public.portfolio_info(port_id)
+);
