@@ -70,14 +70,29 @@ def _load_positions(account_id: int, as_of_date) -> pd.DataFrame:
 
 # ── HDF helper ─────────────────────────────────────────────────────────────────
 
-def _load_security_pnl(security_ids: list[str], category: str = PNL_CATEGORY) -> pd.DataFrame:
-    """Read PnL distribution matrix (scenarios × securities) from security_pnl.h5."""
+def _load_security_pnl(
+    security_ids: list[str],
+    category: str = PNL_CATEGORY,
+    adhoc_pnl: pd.DataFrame | None = None,
+) -> pd.DataFrame:
+    """Read PnL distribution matrix (scenarios × securities) from security_pnl.h5.
+    If adhoc_pnl is provided, its columns take priority; only the remaining
+    security_ids are fetched from HDF and concatenated."""
+    if adhoc_pnl is not None:
+        remaining_ids = [sid for sid in security_ids if sid not in adhoc_pnl.columns]
+        if not remaining_ids:
+            return adhoc_pnl
+        return pd.concat([adhoc_pnl, hdf_utils.read(remaining_ids, category, PNL_FILE)], axis=1)
     return hdf_utils.read(security_ids, category, PNL_FILE)
 
 
 # ── Core calculation ───────────────────────────────────────────────────────────
 
-def calc_var(positions: pd.DataFrame, category: str = PNL_CATEGORY) -> pd.DataFrame:
+def calc_var(
+    positions: pd.DataFrame,
+    category: str = PNL_CATEGORY,
+    adhoc_pnl: pd.DataFrame | None = None,
+) -> pd.DataFrame:
     """
     Calculate VaR and risk metrics for each position.
 
@@ -89,11 +104,15 @@ def calc_var(positions: pd.DataFrame, category: str = PNL_CATEGORY) -> pd.DataFr
     category : str
         HDF category to load distributions from (default: 'PNL').
         Pass 'ALT' to use unadjusted alternative distributions.
+    adhoc_pnl : DataFrame | None
+        Optional pre-computed PnL distributions (scenarios × security_ids).
+        Passed through to _load_security_pnl(): adhoc columns take priority,
+        remaining security IDs are fetched from HDF. Indices assumed aligned.
 
     Returns
     -------
     DataFrame indexed by pos_id with 10 metric columns only.
-    Positions whose SecurityID is absent from security_pnl.h5 have NaN metrics.
+    Positions whose SecurityID is absent from all sources have NaN metrics.
     Caller is responsible for merging these metrics back into the positions DataFrame.
     """
     # Output scaffold — all positions, metrics initialised to NaN
@@ -106,7 +125,7 @@ def calc_var(positions: pd.DataFrame, category: str = PNL_CATEGORY) -> pd.DataFr
 
     # Load PnL distributions for all unique securities in one read
     security_ids = positions['SecurityID'].dropna().unique().tolist()
-    sec_pnl = _load_security_pnl(security_ids, category)   # scenarios × SecurityIDs
+    sec_pnl = _load_security_pnl(security_ids, category, adhoc_pnl)
 
     # Build position PnL matrix (only positions with available data)
     pos_pnl_cols = {}

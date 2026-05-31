@@ -31,9 +31,9 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 
 import pandas as pd
 
-from database2 import pg_connection
+from database2 import get_proc_asof_date
 from process2 import var_engine
-from process2.db_position_var import fetch_latest_as_of_date, insert_results
+from process2.db_position_var import insert_results
 from process2.preprocess_var import preprocess_var
 
 
@@ -65,98 +65,23 @@ def _setup_logger(feed_source: str | None, as_of_date, account_id=None) -> loggi
     return logger
 
 
-# ── Beta helpers ───────────────────────────────────────────────────────────────
-
-def load_account_beta_keys(account_ids: list[int]) -> dict[int, str]:
-    """
-    Return {account_id: beta_key} for all given account_ids in a single query,
-    using the most-recently updated row per account.
-    """
-    if not account_ids:
-        return {}
-    query = """
-        SELECT DISTINCT ON (account_id) account_id, beta_key
-        FROM account_parameters
-        WHERE account_id = ANY(%s) AND beta_key IS NOT NULL
-        ORDER BY account_id, updated_at DESC
-    """
-    with pg_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute(query, (list(account_ids),))
-            rows = cur.fetchall()
-    return {row[0]: row[1] for row in rows}
-
-
-def fetch_betas_bulk(
-    beta_keys: list[str],
-    security_ids: list[str],
-) -> dict[str, dict[str, float]]:
-    """
-    Return {beta_key: {security_id: beta}} for the given beta_keys,
-    filtered to only the securities present in security_ids.
-    A single query replaces repeated per-account fetches.
-    """
-    if not beta_keys or not security_ids:
-        return {}
-    query = """
-        SELECT beta_key, security_id, beta
-        FROM sec_beta
-        WHERE beta_key = ANY(%s) AND security_id = ANY(%s)
-    """
-    with pg_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute(query, (list(beta_keys), list(security_ids)))
-            rows = cur.fetchall()
-    result: dict[str, dict[str, float]] = {}
-    for bk, sid, beta in rows:
-        result.setdefault(bk, {})[sid] = beta
-    return result
-
-
-def add_beta_to_result(
-    result: pd.DataFrame,
-    betas: dict,
-    logger: logging.Logger,
-) -> pd.DataFrame:
-    """
-    Map betas onto result by SecurityID. Missing securities get NULL.
-    Applies to all rows (active and excluded).
-    """
-    result['beta'] = result['SecurityID'].map(betas) if betas else None
-    matched = result['beta'].notna().sum()
-    logger.info(f"Beta: {matched}/{len(result)} positions matched (beta_key has {len(betas)} securities)")
-    return result
-
-
 # ── VaR runner helper ─────────────────────────────────────────────────────────
 
 def _run_var(
     label: str,
-    active: pd.DataFrame,
-    excluded: pd.DataFrame,
+    positions: pd.DataFrame,
     as_of_date,
-    betas: dict,
     logger: logging.Logger,
 ) -> int:
     """
-    Run VaR engine on active positions, re-attach excluded rows with NULL VaR columns,
-    add beta for all rows, insert into position_var, and return the number of rows inserted.
-    betas — pre-fetched {security_id: beta} for this account (may be empty).
+    Run VaR engine on all positions, insert into position_var, and return rows inserted.
+    Positions without PnL data in the HDF store receive NaN metrics.
     Raises on engine or DB failure — caller decides whether to skip or abort.
     """
-    var_metrics = var_engine.calc_var(active)
-    result = active.set_index('pos_id').join(var_metrics, how='left')
-
-    if not excluded.empty:
-        excl = excluded.set_index('pos_id')
-        for col in var_metrics.columns:
-            excl[col] = None
-        result = pd.concat([result, excl])
-
-    result = add_beta_to_result(result, betas, logger)
-    result = result.reset_index()
+    var_metrics = var_engine.calc_var(positions)
+    result = positions.set_index('pos_id').join(var_metrics, how='left').reset_index()
     n = insert_results(result, as_of_date)
-    logger.info(f"{label}: {len(active)} positions calculated, {len(excluded)} excluded, {n} rows inserted")
+    logger.info(f"{label}: {len(positions)} positions, {n} rows inserted")
     return n
 
 
@@ -176,7 +101,7 @@ def calculate_var(feed_source: str | None = None, as_of_date=None, account_id: i
     If as_of_date is not provided, the latest as_of_date across proc_positions is used.
     """
     if as_of_date is None:
-        as_of_date = fetch_latest_as_of_date(feed_source)
+        as_of_date = get_proc_asof_date()
 
     logger = _setup_logger(feed_source, as_of_date, account_id)
 
@@ -187,21 +112,13 @@ def calculate_var(feed_source: str | None = None, as_of_date=None, account_id: i
             f"account_id={account_id} ==="
         )
         try:
-            params, all_positions = preprocess_var(as_of_date, feed_source, account_ids=[account_id])
+            all_positions = preprocess_var(as_of_date, feed_source, account_ids=[account_id])
         except Exception as e:
             logger.error(f"preprocess_var failed: {e}")
             raise
 
-        sec_ids          = all_positions['SecurityID'].dropna().unique().tolist()
-        acct_beta_keys   = load_account_beta_keys([account_id])
-        unique_beta_keys = list(set(acct_beta_keys.values()))
-        betas_bulk       = fetch_betas_bulk(unique_beta_keys, sec_ids)
-        betas            = betas_bulk.get(acct_beta_keys.get(account_id), {})
-
-        excluded = all_positions[all_positions['excluded'] == True]
-        active   = all_positions[all_positions['excluded'] != True]
         try:
-            n = _run_var(f"account_id={account_id}", active, excluded, as_of_date, betas, logger)
+            n = _run_var(f"account_id={account_id}", all_positions, as_of_date, logger)
         except Exception as e:
             logger.error(f"account_id={account_id}: FAILED — {e}")
             raise
@@ -214,38 +131,18 @@ def calculate_var(feed_source: str | None = None, as_of_date=None, account_id: i
     logger.info(f"=== Start VaR: feed_source={feed_source!r} as_of_date={as_of_date} (all accounts) ===")
 
     try:
-        params, all_positions = preprocess_var(as_of_date, feed_source)
+        all_positions = preprocess_var(as_of_date, feed_source)
     except Exception as e:
         logger.error(f"preprocess_var failed: {e}")
         raise
 
     all_account_ids = all_positions['account_id'].unique()
 
-    # Pre-fetch all betas in one pass: one DB call for account→beta_key, one for betas
-    sec_ids          = all_positions['SecurityID'].dropna().unique().tolist()
-    acct_beta_keys   = load_account_beta_keys([int(x) for x in all_account_ids])
-    unique_beta_keys = list(set(acct_beta_keys.values()))
-    betas_bulk       = fetch_betas_bulk(unique_beta_keys, sec_ids)
-    logger.info(
-        f"Beta pre-fetch: {len(acct_beta_keys)} accounts with beta_key, "
-        f"{len(unique_beta_keys)} unique key(s), "
-        f"{sum(len(v) for v in betas_bulk.values())} security-beta mappings loaded"
-    )
-
-    def _account_betas(acct_id: int) -> dict:
-        bk = acct_beta_keys.get(acct_id)
-        return betas_bulk.get(bk, {}) if bk else {}
-
     total_inserted = 0
     for acct_id in all_account_ids:
-        acc_pos  = all_positions[all_positions['account_id'] == acct_id]
-        excluded = acc_pos[acc_pos['excluded'] == True]
-        active   = acc_pos[acc_pos['excluded'] != True]
+        acc_pos = all_positions[all_positions['account_id'] == acct_id]
         try:
-            total_inserted += _run_var(
-                f"account_id={acct_id}", active, excluded, as_of_date,
-                _account_betas(acct_id), logger,
-            )
+            total_inserted += _run_var(f"account_id={acct_id}", acc_pos, as_of_date, logger)
         except Exception as e:
             logger.error(f"account_id={acct_id}: FAILED — {e}")
             continue

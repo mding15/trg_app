@@ -50,6 +50,8 @@ def alternative_model(model_info: pd.DataFrame, corefactor_dist: pd.DataFrame) -
     Generate return distributions for each alternative security.
 
     dist[security_id] = beta * corefactor_dist[proxy_id] + N(0, sigma)
+
+    required columns in model_info: security_id, proxy_id, beta, sigma
     """
     N = len(corefactor_dist)
     series = {}
@@ -80,30 +82,59 @@ def alternative_model_unadj(model_info: pd.DataFrame, corefactor_dist: pd.DataFr
 
     dist[security_id] = beta * corefactor_dist[proxy_id] + N(0, sigma)
     """
-    N = len(corefactor_dist)
-    series = {}
+    # N = len(corefactor_dist)
+    # series = {}
 
-    for row in model_info.itertuples(index=False):
-        sec_id    = row.security_id
-        proxy     = row.proxy_id
-        unadj_vol = row.unadj_vol
-        rho       = row.proxy_correl
-        proxy_vol = row.proxy_vol
+    mi_unadj = model_info.copy()
+    mi_unadj["beta"] = mi_unadj["proxy_correl"] * mi_unadj["unadj_vol"] / mi_unadj["proxy_vol"]
+    mi_unadj["sigma"] = mi_unadj["unadj_vol"] * np.sqrt(1 - mi_unadj["proxy_correl"] ** 2)
+
+    return alternative_model(mi_unadj, corefactor_dist)
+
+    # for row in model_info.itertuples(index=False):
+    #     sec_id    = row.security_id
+    #     proxy     = row.proxy_id
+    #     unadj_vol = row.unadj_vol
+    #     rho       = row.proxy_correl
+    #     proxy_vol = row.proxy_vol
         
-        if pd.isna(unadj_vol):
-            log.warning("Skipping %s — unadjusted volatility is null", sec_id)
-            continue
-        if proxy not in corefactor_dist.columns:
-            log.warning("Skipping %s — proxy_id '%s' not in corefactor_dist", sec_id, proxy)
-            continue
+    #     if pd.isna(unadj_vol):
+    #         log.warning("Skipping %s — unadjusted volatility is null", sec_id)
+    #         continue
+    #     if proxy not in corefactor_dist.columns:
+    #         log.warning("Skipping %s — proxy_id '%s' not in corefactor_dist", sec_id, proxy)
+    #         continue
 
-        beta  = (rho * unadj_vol) / proxy_vol if proxy_vol != 0 else 0.0
-        sigma = unadj_vol * np.sqrt(1 - rho**2)
-        systematic   = corefactor_dist[proxy].values * float(beta)
-        idiosyncratic = np.random.normal(0, float(sigma) if not pd.isna(sigma) else 0.0, N)
-        series[sec_id] = systematic + idiosyncratic
+    #     beta  = (rho * unadj_vol) / proxy_vol if proxy_vol != 0 else 0.0
+    #     sigma = unadj_vol * np.sqrt(1 - rho**2)
 
-    return pd.DataFrame(series, index=corefactor_dist.index)
+    #     systematic   = corefactor_dist[proxy].values * float(beta)
+    #     idiosyncratic = np.random.normal(0, float(sigma) if not pd.isna(sigma) else 0.0, N)
+    #     series[sec_id] = systematic + idiosyncratic
+
+    # return pd.DataFrame(series, index=corefactor_dist.index)
+
+def alternative_model_adhoc(correl: dict) -> pd.DataFrame:
+    """
+    Generate return distributions for a subset of alternatives with overridden correlations.
+
+    correl: {security_id: proxy_correl_value}
+    Securities not present in correl are dropped. beta and sigma are recomputed
+    from the supplied proxy_correl using the same formula as alternative_model_unadj.
+    """
+    model_info = get_model_info()
+
+    model_info = model_info[model_info["security_id"].isin(correl)].copy()
+    if model_info.empty:
+        return pd.DataFrame()
+
+    model_info["proxy_correl"] = model_info["security_id"].map(correl)
+    model_info["beta"]         = model_info["proxy_correl"] * model_info["unadj_vol"] / model_info["proxy_vol"]
+    model_info["sigma"]        = model_info["unadj_vol"] * np.sqrt(1 - model_info["proxy_correl"] ** 2)
+
+    cf_dist = corefactor_dist(model_info)
+    return alternative_model(model_info, cf_dist)
+
 
 # ── Run model ────────────────────────────────────────────────────────────────
 
@@ -130,7 +161,7 @@ def run_model() -> None:
     var_utils.save_dist(dist, category="PRICE")
 
     log.info("Generating security distributions using unadjusted volatilities …")
-    dist = alternative_model(model_info, cf_dist)
+    dist = alternative_model_unadj(model_info, cf_dist)
     DATA["dist_unadj"] = dist
     log.info("  dist shape: %s", dist.shape)
 
@@ -170,6 +201,10 @@ def test():
     _save_csv(dist, "alt_dist", index=True)
     print(f"dist: {dist.shape}")
 
+    dist = alternative_model_unadj(model_info, cf_dist)
+    DATA["dist"] = dist
+    _save_csv(dist, "alt_dist_unadj", index=True)
+    print(f"dist_unadj: {dist.shape}")
 
 if __name__ == "__main__":
     import argparse

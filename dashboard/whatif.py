@@ -10,6 +10,14 @@ Routes (registered in routes.py):
 from __future__ import annotations
 
 import math
+import os
+import sys
+# When run directly (python dashboard/whatif.py), Python adds dashboard/ to sys.path
+# but not trg_app/. This inserts trg_app/ so that database2 and dashboard.* resolve.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+import numpy as np
+import pandas as pd
 
 from database2 import pg_connection
 from dashboard.portfolio_allocation import (
@@ -18,6 +26,11 @@ from dashboard.portfolio_allocation import (
     _latest_as_of_date,
     build_alloc_slices,
 )
+from dashboard.concentration_db import read_concentrations
+from dashboard.concentration_calc import compute_concentrations, load_limits
+from dashboard.allocation_drilldown import get_alloc_drilldown_data
+from models import alternative_model
+from process2 import var_engine
 
 # ── Risk model parameters (edit here to update the model) ────────────────────
 
@@ -224,11 +237,11 @@ MOCK_ALLOC = {
 # ── Mock alternatives / illiquids ─────────────────────────────────────────────
 
 MOCK_ALTS = [
-    {'id': 'BCX51', 'name': 'Apollo Debt BDC Offshore',  'subclass': 'Private Credit',    'alloc': 4.0,  'corrEq': -0.05, 'corrFi': 0.55, 'capCall': 0.0},
-    {'id': 'BDP71', 'name': 'Blackstone BXPE (TE)',       'subclass': 'Private Equity',    'alloc': 4.0,  'corrEq':  0.65, 'corrFi': 0.10, 'capCall': 0.0},
-    {'id': 'BCQ06', 'name': 'Blue Owl Cred Inc Corp',     'subclass': 'Private Credit',    'alloc': 4.0,  'corrEq': -0.02, 'corrFi': 0.60, 'capCall': 0.0},
-    {'id': 'BCJ30', 'name': 'Blackstone BCRED-O',         'subclass': 'Private Credit',    'alloc': 3.9,  'corrEq':  0.05, 'corrFi': 0.50, 'capCall': 0.0},
-    {'id': 'VNQ',   'name': 'Vanguard Real Estate ETF',   'subclass': 'Real Estate/REITs', 'alloc': 1.6,  'corrEq':  0.72, 'corrFi': 0.15, 'capCall': 0.0},
+    {'id': 'BCX51', 'security_id': 'T0001', 'name': 'Apollo Debt BDC Offshore',  'subclass': 'Private Credit',    'corr': -0.05, 'index': 'Bloomberg US Agg',  'alt_exposure':  2_500_000, 'market_value':  2_500_000},
+    {'id': 'BDP71', 'security_id': 'T0002', 'name': 'Blackstone BXPE (TE)',       'subclass': 'Private Equity',    'corr':  0.65, 'index': 'S&P 500',           'alt_exposure':  4_800_000, 'market_value':  4_800_000},
+    {'id': 'BCQ06', 'security_id': 'T0003', 'name': 'Blue Owl Cred Inc Corp',     'subclass': 'Private Credit',    'corr': -0.02, 'index': 'Bloomberg US Agg',  'alt_exposure':  3_200_000, 'market_value':  3_200_000},
+    {'id': 'BCJ30', 'security_id': 'T0004', 'name': 'Blackstone BCRED-O',         'subclass': 'Private Credit',    'corr':  0.05, 'index': 'Bloomberg US Agg',  'alt_exposure':  1_750_000, 'market_value':  1_750_000},
+    {'id': 'VNQ',   'security_id': 'T0005', 'name': 'Vanguard Real Estate ETF',   'subclass': 'Real Estate/REITs', 'corr':  0.72, 'index': 'FTSE NAREIT All',   'alt_exposure':  6_100_000, 'market_value':  6_100_000},
 ]
 
 # ── Weight fetch helpers ──────────────────────────────────────────────────────
@@ -452,6 +465,490 @@ def get_whatif_allocations(port_id: int) -> dict:
     return slices
 
 
-def get_whatif_alternatives(port_id: int) -> list:
-    """Return illiquid/alternatives positions for a portfolio (mock in phase 1)."""
-    return MOCK_ALTS
+def get_whatif_alt_positions(account_id: int | None) -> list:
+    """Return illiquid/alternatives positions for an account from position_var + alternative_model."""
+    if account_id is None:
+        return MOCK_ALTS
+
+    with pg_connection() as conn:
+        as_of_date = _latest_as_of_date(conn, account_id)
+        if as_of_date is None:
+            return MOCK_ALTS
+
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT pv.ticker, pv.security_id, pv.security_name, pv.sc1, am.proxy_correl, am.proxy_name, pv.market_value
+                FROM position_var pv
+                JOIN alternative_model am ON pv.security_id = am.security_id
+                WHERE pv.account_id = %s
+                  AND pv.as_of_date = %s
+                  AND pv."class" = 'Alternatives'
+                """,
+                (account_id, as_of_date),
+            )
+            rows = cur.fetchall()
+
+    if not rows:
+        return MOCK_ALTS
+
+    return [
+        {
+            'id':          r[0],
+            'security_id': r[1],
+            'name':        r[2],
+            'subclass':    r[3],
+            'corr':        float(r[4]) if r[4] is not None else 0.0,
+            'index':       r[5],
+            'alt_exposure':     float(r[6]) if r[6] is not None else 0.0,
+        }
+        for r in rows
+    ]
+
+
+# ── Alternatives panel constants (backend source of truth, phase 1) ───────────
+
+_ALT_ORIGINAL = {
+    'var':         16.9,
+    'vol':          5.9,
+    'beta':         1.20,
+    'raer':         0.21,
+    'var_limit':   25.0,
+    'raer_target':  0.15,
+    'raer_max':     0.65,
+    'risk_max':    35.0,
+}
+
+_ALT_ALLOC_DATA = {
+    'rows': [
+        {'label': 'Equity',       'mv': 46.3, 'var': 55.6, 'child': 'eq-sub'},
+        {'label': 'Fixed Income', 'mv': 18.9, 'var': 12.4, 'child': 'fi-sub'},
+        {'label': 'Money Market', 'mv': 14.7, 'var':  6.2, 'child': 'mm-sub'},
+        {'label': 'Alternatives', 'mv': 12.1, 'var': 16.8, 'child': 'alt-sub'},
+        {'label': 'Commodities',  'mv':  5.0, 'var':  7.2, 'child': 'com-sub'},
+        {'label': 'Cash',         'mv':  3.0, 'var':  1.8, 'child': None},
+    ],
+}
+
+_ALT_ALLOC_DRILL = {
+    'eq-sub':  {'parent': 'all', 'parentLabel': 'Equity', 'rows': [
+        {'label': 'Large Cap', 'mv': 52,   'var': 65,   'child': 'eq-large'},
+        {'label': 'Mid Cap',   'mv': 22,   'var': 18,   'child': None},
+        {'label': 'Small Cap', 'mv': 14,   'var': 10,   'child': None},
+        {'label': 'Intl',      'mv': 12,   'var':  7,   'child': None},
+    ]},
+    'fi-sub':  {'parent': 'all', 'parentLabel': 'Fixed Income', 'rows': [
+        {'label': 'Govt Bonds', 'mv': 38, 'var': 28, 'child': None},
+        {'label': 'Corp IG',    'mv': 32, 'var': 30, 'child': None},
+        {'label': 'Corp HY',    'mv': 18, 'var': 26, 'child': None},
+        {'label': 'MBS',        'mv': 12, 'var': 16, 'child': None},
+    ]},
+    'mm-sub':  {'parent': 'all', 'parentLabel': 'Money Market', 'rows': [
+        {'label': 'T-Bills', 'mv': 55, 'var': 30, 'child': None},
+        {'label': 'Repo',    'mv': 30, 'var': 50, 'child': None},
+        {'label': 'MMF',     'mv': 15, 'var': 20, 'child': None},
+    ]},
+    'alt-sub': {'parent': 'all', 'parentLabel': 'Alternatives', 'rows': [
+        {'label': 'Private Eq.',  'mv': 45, 'var': 50, 'child': 'alt-pe'},
+        {'label': 'Hedge Funds',  'mv': 35, 'var': 32, 'child': None},
+        {'label': 'Real Estate',  'mv': 20, 'var': 18, 'child': None},
+    ]},
+    'com-sub': {'parent': 'all', 'parentLabel': 'Commodities', 'rows': [
+        {'label': 'Energy',      'mv': 42, 'var': 52, 'child': None},
+        {'label': 'Metals',      'mv': 35, 'var': 30, 'child': None},
+        {'label': 'Agriculture', 'mv': 23, 'var': 18, 'child': None},
+    ]},
+    'eq-large': {'parent': 'eq-sub', 'parentLabel': 'Large Cap', 'rows': [
+        {'label': 'AAPL',  'mv': 14,   'var': 13.5, 'child': None},
+        {'label': 'MSFT',  'mv': 11,   'var':  6.8, 'child': None},
+        {'label': 'NVDA',  'mv':  9.2, 'var': 14.1, 'child': None},
+        {'label': 'AMZN',  'mv':  7,   'var':  7.2, 'child': None},
+        {'label': 'GOOGL', 'mv':  7.5, 'var':  3.8, 'child': None},
+        {'label': 'Other', 'mv': 51.3, 'var': 54.6, 'child': None},
+    ]},
+    'alt-pe':  {'parent': 'alt-sub', 'parentLabel': 'Private Eq.', 'rows': [
+        {'label': 'KKR XII',   'mv': 40, 'var': 45, 'child': None},
+        {'label': 'BX IX',     'mv': 35, 'var': 38, 'child': None},
+        {'label': 'Apollo XI', 'mv': 25, 'var': 17, 'child': None},
+    ]},
+}
+
+
+def _fetch_positions_for_var(conn, account_id: int, as_of_date) -> pd.DataFrame:
+    """Fetch position_var rows needed for VaR engine and portfolio aggregation."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT pos_id, security_id, market_value, expected_return, beta,
+                   "class" AS asset_class, region, currency, sector, ticker, security_name, sc1
+            FROM position_var
+            WHERE account_id = %s AND as_of_date = %s
+            """,
+            (account_id, as_of_date),
+        )
+        rows = cur.fetchall()
+        cols = [d[0] for d in cur.description]
+    return pd.DataFrame(rows, columns=cols)
+
+
+def _build_alloc_from_result(result_df: pd.DataFrame):
+    """
+    Aggregate VaR result DataFrame into (data_dict, drill_dict) for AllocVarCanvas.
+    data_dict  = {'rows': [{'label': class, 'mv': %, 'var': %, 'child': key_or_None}]}
+    drill_dict = {child_key: {'parent': 'all', 'parentLabel': class,
+                              'rows': [{'label': sc1, 'mv': %, 'var': %, 'child': None}]}}
+    Percentages are of total portfolio MV / total portfolio VaR.
+    """
+    df = result_df.copy()
+    df['MarketValue'] = pd.to_numeric(df['MarketValue'], errors='coerce').fillna(0.0)
+    df['mg_var_95']   = pd.to_numeric(df.get('mg_var_95', pd.Series(dtype=float)), errors='coerce').fillna(0.0)
+    df['asset_class'] = df['asset_class'].fillna('Other')
+    df['sc1']         = df['sc1'].fillna('Other') if 'sc1' in df.columns else 'Other'
+
+    total_mv  = float(df['MarketValue'].sum())
+    total_var = float(df['mg_var_95'].sum())
+    if total_mv == 0:
+        return _ALT_ALLOC_DATA, _ALT_ALLOC_DRILL
+
+    def _slug(s: str) -> str:
+        return s.lower().replace(' ', '-').replace('/', '-').replace('&', '').replace(',', '') + '-sub'
+
+    by_class = (
+        df.groupby('asset_class', dropna=False)
+          .agg(mv=('MarketValue', 'sum'), var=('mg_var_95', 'sum'))
+          .reset_index()
+          .sort_values('mv', ascending=False)
+    )
+
+    rows  = []
+    drill = {}
+
+    for _, r in by_class.iterrows():
+        cls       = str(r['asset_class'])
+        mv_p      = round(float(r['mv'])  / total_mv  * 100, 1)
+        var_p     = round(float(r['var']) / total_var * 100, 1) if total_var else 0.0
+        child_key = _slug(cls)
+
+        sub = df[df['asset_class'] == cls]
+        sub_by_sc1 = (
+            sub.groupby('sc1', dropna=False)
+               .agg(mv=('MarketValue', 'sum'), var=('mg_var_95', 'sum'))
+               .reset_index()
+               .sort_values('mv', ascending=False)
+        )
+        sub_total_mv  = float(sub['MarketValue'].sum())
+        sub_total_var = float(sub['mg_var_95'].sum())
+
+        drill_rows = []
+        for _, sr in sub_by_sc1.iterrows():
+            sc1    = str(sr['sc1'])
+            smv_p  = round(float(sr['mv'])  / sub_total_mv  * 100, 1) if sub_total_mv  > 0 else 0.0
+            svar_p = round(float(sr['var']) / sub_total_var * 100, 1) if sub_total_var > 0 else 0.0
+            drill_rows.append({'label': sc1, 'mv': smv_p, 'var': svar_p, 'child': None})
+
+        has_child = len(drill_rows) > 1
+        rows.append({'label': cls, 'mv': mv_p, 'var': var_p, 'child': child_key if has_child else None})
+        if has_child:
+            drill[child_key] = {'parent': 'all', 'parentLabel': cls, 'rows': drill_rows}
+
+    return {'rows': rows}, drill
+
+
+def post_whatif_alternatives_calculate(account_id: int | None, positions: list) -> dict:
+    """Return modified risk metrics for adjusted alternative positions."""
+    _stub_fallback = None
+    try:
+        if account_id is not None:
+            with pg_connection() as conn:
+                base = _fetch_alt_original(conn, account_id)
+        else:
+            base = _ALT_ORIGINAL
+        _stub_fallback = {
+            'var':  round(base['var']  * 1.1, 1),
+            'vol':  round(base['vol']  * 1.1, 1),
+            'beta': round(base['beta'] * 1.1, 2),
+            'raer': round(base['raer'] * 1.1, 2),
+        }
+    except Exception:
+        _stub_fallback = {k: round(v * 1.1, 2) for k, v in _ALT_ORIGINAL.items() if k in ('var', 'vol', 'beta', 'raer')}
+
+    if not positions or account_id is None:
+        return _stub_fallback
+
+    try:
+        # Step 1: build correl dict and get adhoc PnL distributions
+        correl    = {p['security_id']: p['corr'] for p in positions if p.get('security_id')}
+        adhoc_pnl = alternative_model.alternative_model_adhoc(correl)
+        if adhoc_pnl.empty:
+            return _stub_fallback
+
+        # Step 2: fetch all positions from position_var
+        with pg_connection() as conn:
+            as_of_date = _latest_as_of_date(conn, account_id)
+        if as_of_date is None:
+            return _stub_fallback
+
+        with pg_connection() as conn:
+            df = _fetch_positions_for_var(conn, account_id, as_of_date)
+        if df.empty:
+            return _stub_fallback
+
+        # Step 3: override market_value with alt_exposure where security_id matches
+        exposure_map = {
+            p['security_id']: p['alt_exposure']
+            for p in positions
+            if p.get('security_id') and p.get('alt_exposure') is not None
+        }
+        if exposure_map:
+            mask = df['security_id'].isin(exposure_map)
+            df.loc[mask, 'market_value'] = df.loc[mask, 'security_id'].map(exposure_map)
+
+        # Step 4a: compute concentrations on snake_case df (before VaR engine rename)
+        df['market_value'] = pd.to_numeric(df['market_value'], errors='coerce').fillna(0.0)
+        try:
+            with pg_connection() as conn:
+                limits = load_limits(conn, account_id)
+            concentrations = compute_concentrations(account_id, as_of_date, df, limits)
+        except Exception as e:
+            print(f'[whatif] concentrations failed: {e}')
+            concentrations = []
+
+        # Step 4b: rename for VaR engine and run calc_var
+        engine_df = df.rename(columns={'security_id': 'SecurityID', 'market_value': 'MarketValue'})
+        var_metrics = var_engine.calc_var(engine_df, adhoc_pnl=adhoc_pnl)
+        result = engine_df.set_index('pos_id').join(var_metrics, how='left').reset_index()
+
+        # Step 5: aggregate to portfolio level
+        mv       = pd.to_numeric(result['MarketValue'], errors='coerce').fillna(0.0)
+        aum      = float(mv.sum())
+        if aum == 0:
+            return _stub_fallback
+
+        def _sum(col):
+            s = pd.to_numeric(result[col], errors='coerce').sum()
+            return float(s) if not pd.isna(s) else None
+
+        var_1d_95 = _sum('mg_var_95')
+        sum_mstd  = _sum('mg_std')
+
+        vol = round(float(sum_mstd) / aum * math.sqrt(252) * 100, 4) if sum_mstd else None
+
+        default_beta = result['asset_class'].map({'Cash': 0.0, 'Fixed Income': 0.5}).fillna(1.0)
+        beta_series  = pd.to_numeric(result['beta'], errors='coerce').fillna(default_beta)
+        beta = round(float((mv * beta_series).sum() / aum), 4)
+
+        er           = pd.to_numeric(result['expected_return'], errors='coerce')
+        total_return = float((mv * er).sum()) / aum if er.notna().any() else None
+
+        if total_return is not None and var_1d_95 and var_1d_95 != 0:
+            sharpe_var = round(total_return / (var_1d_95 / aum) / math.sqrt(252), 4)
+        else:
+            sharpe_var = None
+
+        # Step 6: build asset-allocation chart data from the modified result
+        try:
+            alloc_data, alloc_drill = _build_alloc_from_result(result)
+            alloc = {'data': alloc_data, 'drill': alloc_drill}
+        except Exception as e:
+            print(f'[whatif] alloc build failed: {e}')
+            alloc = None
+
+        return {
+            'var':            round(var_1d_95, 2) if var_1d_95 is not None else _stub_fallback['var'],
+            'vol':            round(vol, 4)       if vol       is not None else _stub_fallback['vol'],
+            'beta':           beta,
+            'raer':           sharpe_var          if sharpe_var is not None else _stub_fallback['raer'],
+            'concentrations': concentrations,
+            'alloc':          alloc,
+        }
+
+    except Exception as e:
+        print(f'[whatif] alternatives/calculate Phase 3 failed: {e}')
+        return _stub_fallback
+
+
+def _fetch_alt_original(conn, account_id: int) -> dict:
+    """Fetch live risk metrics and limits for the Alternatives panel; falls back to _ALT_ORIGINAL."""
+    as_of_date = _latest_as_of_date(conn, account_id)
+    if as_of_date is None:
+        return _ALT_ORIGINAL
+
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT var_1d_95, volatility, beta, sharpe_vol
+            FROM db_portfolio_summary
+            WHERE account_id = %s AND as_of_date = %s
+            """,
+            (account_id, as_of_date),
+        )
+        row = cur.fetchone()
+
+    if row is None:
+        return _ALT_ORIGINAL
+
+    var, vol, beta, raer = (float(v) if v is not None else None for v in row)
+    if any(v is None for v in (var, vol, beta, raer)):
+        return _ALT_ORIGINAL
+
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT limit_category, limit_value
+            FROM account_limit
+            WHERE account_id = %s
+              AND limit_category IN ('var_limit_dollar', 'target_sharpe_vol')
+            """,
+            (account_id,),
+        )
+        limits = {r[0]: float(r[1]) for r in cur.fetchall() if r[1] is not None}
+
+    var_limit   = limits.get('var_limit_dollar',  _ALT_ORIGINAL['var_limit'])
+    raer_target = limits.get('target_sharpe_vol', _ALT_ORIGINAL['raer_target'])
+    risk_max    = round(max(var,  var_limit)   * 1.4, 1)
+    raer_max    = round(max(raer, raer_target) * 1.4, 2)
+
+    return {
+        'var':         round(var,        1),
+        'vol':         round(vol,        1),
+        'beta':        round(beta,       2),
+        'raer':        round(raer,       2),
+        'var_limit':   round(var_limit,  1),
+        'raer_target': round(raer_target, 2),
+        'risk_max':    risk_max,
+        'raer_max':    raer_max,
+    }
+
+
+def _fetch_alt_alloc(account_id: int):
+    """Return (data, drill) for the AllocVarCanvas chart from live position_var data.
+    Falls back to the mock constants if no DB rows are found."""
+    drilldown = get_alloc_drilldown_data(account_id)
+    if not drilldown or 'all' not in drilldown:
+        return _ALT_ALLOC_DATA, _ALT_ALLOC_DRILL
+    data  = {'rows': drilldown['all']['rows']}
+    drill = {k: v for k, v in drilldown.items() if k != 'all'}
+    return data, drill
+
+
+def get_whatif_alternatives_panel(account_id: int | None) -> dict:
+    """Return Alternatives tab panel data: base risk metrics, concentrations, alloc/VaR breakdown."""
+    if account_id is not None:
+        with pg_connection() as conn:
+            original = _fetch_alt_original(conn, account_id)
+    else:
+        original = _ALT_ORIGINAL
+
+    concentrations = read_concentrations(account_id) if account_id is not None else []
+    alloc_data, alloc_drill = _fetch_alt_alloc(account_id) if account_id is not None else (_ALT_ALLOC_DATA, _ALT_ALLOC_DRILL)
+
+    return {
+        'original': original,
+        'concentrations': concentrations,
+        'alloc': {
+            'data':  alloc_data,
+            'drill': alloc_drill,
+        },
+    }
+
+# ── Tests ─────────────────────────────────────────────────────────────────────
+
+_TESTS = {}
+
+def _test(name):
+    """Decorator that registers a named test."""
+    def decorator(fn):
+        _TESTS[name] = fn
+        return fn
+    return decorator
+
+
+@_test('alt_original')
+def _test_alt_original(account_id, _portfolios):
+    print("=== _fetch_alt_original ===")
+    with pg_connection() as conn:
+        result = _fetch_alt_original(conn, account_id)
+    for k, v in result.items():
+        print(f'  {k:<14} = {v}')
+
+
+@_test('portfolios')
+def _test_portfolios(account_id, _portfolios):
+    print("=== get_whatif_portfolios ===")
+    portfolios = get_whatif_portfolios("testuser", account_id=account_id)
+    for p in portfolios:
+        print(p)
+
+
+@_test('allocations')
+def _test_allocations(_account_id, portfolios):
+    print("=== get_whatif_allocations ===")
+    result = get_whatif_allocations(portfolios[0]['id'])
+    print(result)
+
+
+@_test('alternatives')
+def _test_alternatives(account_id, _portfolios):
+    print("=== get_whatif_alt_positions ===")
+    result = get_whatif_alt_positions(account_id)
+    for r in result:
+        print(r)
+
+
+@_test('metrics')
+def _test_metrics(_account_id, portfolios):
+    print("=== post_whatif_metrics ===")
+    weights = {'fi': 30, 'eq': 40, 'alt': 20, 'ma': 5, 'mm': 5}
+    result = post_whatif_metrics(portfolios[0]['id'], weights)
+    print(result)
+
+
+@_test('alloc')
+def _test_alloc(account_id, _portfolios):
+    print("=== _fetch_alt_alloc ===")
+    data, drill = _fetch_alt_alloc(account_id)
+    print(f"  top-level rows ({len(data['rows'])}):")
+    for r in data['rows']:
+        print(f"    {r['label']:<20} mv={r['mv']:6.2f}%  var={r['var']:6.2f}%  child={r['child']}")
+    print(f"  drill keys: {list(drill.keys())}")
+
+
+@_test('panel')
+def _test_panel(account_id, _portfolios):
+    print("=== get_whatif_alternatives_panel ===")
+    result = get_whatif_alternatives_panel(account_id)
+    print(f"  original:       {result['original']}")
+    print(f"  concentrations: {result['concentrations']}")
+    print(f"  alloc keys:     {list(result['alloc'].keys())}")
+
+
+def test(names=None, account_id=1011):
+    """Run one or more named tests. Runs all if names is None."""
+    to_run = list(_TESTS.keys()) if not names else names
+    invalid = [n for n in to_run if n not in _TESTS]
+    if invalid:
+        print(f"Unknown test(s): {', '.join(invalid)}")
+        print(f"Available: {', '.join(_TESTS)}")
+        return
+
+    # Pre-fetch portfolios once — needed by allocations and metrics tests
+    portfolios = get_whatif_portfolios("testuser", account_id=account_id)
+
+    for name in to_run:
+        _TESTS[name](account_id, portfolios)
+        print()
+
+
+if __name__ == '__main__':
+    import argparse
+    parser = argparse.ArgumentParser(description='What-If analysis function tests')
+    parser.add_argument(
+        'tests', nargs='*',
+        help=f'Tests to run (default: all). Choices: {", ".join(_TESTS)}',
+    )
+    parser.add_argument(
+        '--account', type=int, default=1011,
+        help='account_id to use (default: 1011)',
+    )
+    args = parser.parse_args()
+    test(names=args.tests or None, account_id=args.account)

@@ -69,7 +69,7 @@ from dashboard.portfolios_page import (
     list_tracked_portfolios, list_adhoc_portfolios, list_position_history,
 )
 from dashboard.upload_portfolio import upload_portfolio as pp_upload_portfolio_impl
-from dashboard.whatif import get_whatif_portfolios, get_whatif_allocations, get_whatif_alternatives, post_whatif_metrics
+from dashboard.whatif import get_whatif_portfolios, get_whatif_allocations, get_whatif_alt_positions, get_whatif_alternatives_panel, post_whatif_alternatives_calculate, post_whatif_metrics
 
 from database.models import User as User
 from database import db_utils, model_aux, ms_sql_server
@@ -874,9 +874,9 @@ def get_summary_gauges(username):
         g = build_gauge_data(account_id)
         data = {
             "sharpe": {
-                "value":  g["sharpe_value"],
-                "target": g["sharpe_target"],
-                "band":   g["sharpe_band"],
+                "value":  g["sharpe_var_value"],
+                "target": g["sharpe_var_target"],
+                "band":   g["sharpe_var_band"],
             },
             "varLimit": {
                 "value": g["var_value"],
@@ -1482,10 +1482,33 @@ def whatif_allocations(username, port_id):
     return jsonify(get_whatif_allocations(port_id)), 200
 
 
-@app.route('/api/whatif/portfolio/<int:port_id>/alternatives', methods=['GET'])
+@app.route('/api/whatif/alternatives/positions', methods=['GET'])
 @token_required
-def whatif_alternatives_route(username, port_id):
-    return jsonify(get_whatif_alternatives(port_id)), 200
+def whatif_alternatives_route(username):
+    account_id = request.args.get('account_id', type=int)
+    return jsonify(get_whatif_alt_positions(account_id)), 200
+
+
+@app.route('/api/whatif/alternatives/calculate', methods=['POST'])
+@token_required
+def whatif_alternatives_calculate_route(username):
+    body = request.get_json(silent=True) or {}
+    account_id = request.args.get('account_id', type=int)
+    positions  = body.get('positions', [])
+    try:
+        return jsonify(post_whatif_alternatives_calculate(account_id, positions)), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/whatif/alternatives/panel', methods=['GET'])
+@token_required
+def whatif_alternatives_panel_route(username):
+    account_id = request.args.get('account_id', type=int)
+    try:
+        return jsonify(get_whatif_alternatives_panel(account_id)), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 
 @app.route('/api/whatif/portfolio/<int:port_id>/metrics', methods=['POST'])

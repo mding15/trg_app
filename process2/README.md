@@ -87,7 +87,7 @@ Tests live in `tests/` and are written with pytest.
 | File | What it tests |
 |------|---------------|
 | `tests/test_db_position_var.py` | `insert_results`: idempotency, stale row removal, type coercion (numeric/date/bool/NaN). `fetch_proc_positions` and `fetch_latest_as_of_date` with `feed_source` (integration). |
-| `tests/test_preprocess_var.py` | `_map_columns`: renames, drops, passthrough. `build_params`: required keys, types, values. `preprocess_var` end-to-end (integration). |
+| `tests/test_preprocess_var.py` | `_map_columns`: renames, drops, passthrough. `preprocess_var` end-to-end (integration). |
 | `tests/test_calculate_var.py` | `build_results`: merge correctness, no duplicate columns. Excluded row re-attachment: NULL VaR columns, position data preserved, row count. `calculate_var` end-to-end (integration). |
 
 ```bash
@@ -105,4 +105,3 @@ cd trg_app && python -m pytest process2/tests/ -v -m integration
 - `insert_results` deletes existing `(as_of_date, account_id)` rows before inserting, so re-runs are safe.
 - Excluded positions are re-attached to the results with VaR columns set to NULL.
 - `as_of_date` defaults to `MAX(as_of_date)` from `proc_positions` for the given `feed_source` if not provided.
-- `PortfolioName` in `build_params` is currently hardcoded to `'MSSB'` — to be derived from `feed_source` when additional feed sources are added.

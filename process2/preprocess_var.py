@@ -1,12 +1,11 @@
 """
-preprocess_var.py — Build (params, positions) ready for VaR calculation.
+preprocess_var.py — Build enriched positions DataFrame ready for VaR calculation.
 
 Steps:
     1. Fetch all proc_positions rows for the given as_of_date.
     2. Map column names to VaR engine conventions.
     3. Enrich with security attributes via update_security_info().
     4. Fill missing/stale prices via update_position_price().
-    5. Return (params dict, enriched positions DataFrame).
 """
 from __future__ import annotations
 
@@ -17,6 +16,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 
 import pandas as pd
 
+from database2 import pg_connection
 from process2.db_position_var import fetch_proc_positions
 from process2.update_security_info import update_security_info
 from process2.update_position_price import update_position_price
@@ -48,23 +48,31 @@ def _map_columns(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-# ── params ─────────────────────────────────────────────────────────────────────
+# ── beta fetch ─────────────────────────────────────────────────────────────────
 
-def build_params(as_of_date) -> dict:
-    """Return hardcoded VaR params for MSSB accounts."""
-    as_of_date = pd.to_datetime(as_of_date)
-    return {
-        'AsofDate':        as_of_date,
-        'ReportDate':      as_of_date,
-        'RiskHorizon':     '1 Day',
-        'TailMeasure':     '95% TailVaR',
-        'ReturnFrequency': 'Daily',
-        'Benchmark':       'BM_60_40',
-        'ExpectedReturn':  'Upload',
-        'BaseCurrency':    'USD',
-        # ── HARDCODED: PortfolioName should eventually be derived from feed_source ──
-        'PortfolioName':   'MSSB',
-    }
+def _fetch_betas(as_of_date, account_ids: list[int]) -> pd.DataFrame:
+    """Return (account_id, security_id, beta) rows from sec_beta via account_parameters."""
+    if not account_ids:
+        return pd.DataFrame(columns=['account_id', 'security_id', 'beta'])
+    with pg_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT DISTINCT ON (pp.account_id, pp.security_id)
+                       pp.account_id, pp.security_id, sb.beta
+                FROM proc_positions pp
+                LEFT JOIN account_parameters ap ON pp.account_id = ap.account_id
+                LEFT JOIN sec_beta sb
+                       ON pp.security_id = sb.security_id
+                      AND sb.beta_key    = ap.beta_key
+                WHERE pp.as_of_date = %s
+                  AND pp.account_id  = ANY(%s)
+                ORDER BY pp.account_id, pp.security_id, ap.updated_at DESC
+                """,
+                (as_of_date, account_ids),
+            )
+            rows = cur.fetchall()
+    return pd.DataFrame(rows, columns=['account_id', 'security_id', 'beta'])
 
 
 # ── main ───────────────────────────────────────────────────────────────────────
@@ -73,14 +81,13 @@ def preprocess_var(
     as_of_date,
     feed_source: str | None = None,
     account_ids: list[int] | None = None,
-) -> tuple[dict, pd.DataFrame]:
+) -> pd.DataFrame:
     """
-    Build (params, positions) for VaR calculation from proc_positions.
+    Build enriched positions DataFrame for VaR calculation from proc_positions.
 
     as_of_date:   the as_of_date value in proc_positions to process.
     feed_source:  only rows with this feed_source are fetched.
     account_ids:  if provided, only rows for those account_ids are fetched.
-    Returns (params dict, enriched positions DataFrame).
     """
     positions = fetch_proc_positions(as_of_date, feed_source, account_ids)
     if positions.empty:
@@ -95,5 +102,13 @@ def preprocess_var(
     positions = update_position_price(positions, as_of_date)
     positions = positions.reset_index(drop=True)
 
-    params = build_params(as_of_date)
-    return params, positions
+    acct_ids = [int(a) for a in positions['account_id'].dropna().unique()]
+    betas_df = _fetch_betas(as_of_date, acct_ids)
+    positions = positions.merge(
+        betas_df,
+        left_on=['account_id', 'SecurityID'],
+        right_on=['account_id', 'security_id'],
+        how='left',
+    ).drop(columns='security_id')
+
+    return positions
