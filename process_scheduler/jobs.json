@@ -68,6 +68,20 @@
     "venv_path": null
   },
 
+  {
+    "id": "purge_pnl_stat",
+    "name": "Purge PnL Stat",
+    "description": "Purge P/L stat data from db table",
+    "script_path": "api/trgapp/process2/db_pnl_stat.py",
+    "script_type": "python",
+    "schedule_time": null,
+    "dependencies": ["pnl_treasury", "pnl_bond"],
+    "max_retries": 2,
+    "retry_delay_seconds": 60,
+    "enabled": true,
+    "venv_path": null
+  },
+
     {
     "id": "calc_beta",
     "name": "Beta Calculation",
@@ -75,7 +89,7 @@
     "script_path": "api/trgapp/process2/calc_beta.py",
     "script_type": "python",
     "schedule_time": null,
-    "dependencies": ["pnl_bond", "pnl_linear_prod"],
+    "dependencies": ["pnl_bond", "pnl_linear_prod", "pnl_linear_prod"],
     "max_retries": 2,
     "retry_delay_seconds": 60,
     "enabled": true,

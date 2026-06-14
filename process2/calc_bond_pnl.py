@@ -24,7 +24,7 @@ Steps:
     6. IR P&L:     map each USD bond to two UST tenor points; get_dist(ust_ids, 'IR');
                    compute (w1 * dist_ir[T1] + w2 * dist_ir[T2]) * ir_pv01.
     7. Total P&L = pnl_spread + pnl_ir (aligned on scenario index).
-    8. Save one Series per security under 'BOND_PNL/{SecurityID}' in security_pnl.h5.
+    8. Save one Series per security under 'PNL/{SecurityID}' in security_pnl.h5.
     9. Compute distribution statistics and save to log/ as a timestamped CSV.
 
 Usage:
@@ -47,13 +47,18 @@ from trg_config import config
 from database2 import pg_connection, get_proc_asof_date
 from models import bond_risk as br
 from utils import hdf_utils, var_utils, stat_utils
+from process2.db_pnl_stat import save_pnl_stat, save_security_sensitivity
 
 def _get_bond_securities() -> pd.DataFrame:
     with pg_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                'SELECT "SecurityID", "AssetClass", "AssetType", "Currency" '
-                'FROM current_security WHERE "AssetClass" = %s AND "AssetType" = %s',
+                """
+                SELECT DISTINCT cs."SecurityID", si."AssetClass", si."AssetType", si."Currency"
+                FROM current_security cs
+                JOIN security_info si ON si."SecurityID" = cs."SecurityID"
+                WHERE si."AssetClass" = %s AND si."AssetType" = %s
+                """,
                 ('Bond', 'Bond'),
             )
             rows = cur.fetchall()
@@ -288,17 +293,26 @@ def calc_bond_pnl(as_of_date: date = None) -> pd.DataFrame:
     else:
         pnl = pnl_spread.add(pnl_ir, fill_value=0)
 
-    # Step 7: Save one Series per security under 'BOND_PNL/{SecurityID}'
+    # Step 7: Save one Series per security under 'PNL/{SecurityID}'
     output_file = config['VaR_DIR'] / 'security_pnl.h5'
-    hdf_utils.save(pnl, 'BOND_PNL', output_file)
+    hdf_utils.save(pnl, 'PNL', output_file)
+    if not pnl_ir.empty:
+        hdf_utils.save(pnl_ir, 'IR_PNL', output_file)
+    if not pnl_spread.empty:
+        hdf_utils.save(pnl_spread, 'SPREAD_PNL', output_file)
     print(f'Saved: {output_file}')
 
-    # Step 8: Distribution statistics → timestamped CSV in log/
+    # Save security-level sensitivities + skewness/kurtosis from P&L distribution
+    pnl_stats = pd.DataFrame({'Skewness': pnl.skew(), 'Kurtosis': pnl.kurt()})
+    pnl_stats.index.name = 'SecurityID'
+    sens = securities.set_index('SecurityID').join(pnl_stats, how='left').reset_index()
+    n = save_security_sensitivity(sens, as_of_date)
+    print(f'Sensitivities written to DB: {n} rows')
+
+    # Step 8: Distribution statistics → timestamped CSV in log/ and DB
     stats     = stat_utils.dist_stat(pnl)
-    ts        = datetime.now().strftime('%Y%m%d_%H%M%S')
-    stat_file = config['LOG_DIR'] / f'bond_pnl_stat_{ts}.csv'
-    stats.to_csv(stat_file)
-    print(f'Stats saved: {stat_file}')
+    n = save_pnl_stat(stats, as_of_date, 'BOND')
+    print(f'Stats written to DB: {n} rows (pnl_type=BOND)')
 
     return pnl
 
@@ -376,7 +390,7 @@ def test():
     # Step 8: Save to HDF
     output_hdf = config['VaR_DIR'] / 'security_pnl.h5'
     if not step7.empty:
-        hdf_utils.save(step7, 'BOND_PNL', output_hdf)
+        hdf_utils.save(step7, 'PNL', output_hdf)
     results['Step8_HDF'] = pd.DataFrame([{
         'output_file': str(output_hdf),
         'rows':        step7.shape[0] if not step7.empty else 0,

@@ -247,10 +247,10 @@ def _get_proc_asof_date():
 
 
 # extract End of Day Price and save db
-def extract_eod(tickers=None):
+def extract_eod(tickers=None, asof_date=None):
 
-    # get as_of_date from proc_asof_date table
-    today = _get_proc_asof_date()
+    # use supplied date or fall back to proc_asof_date table
+    today = asof_date if asof_date is not None else _get_proc_asof_date()
 
     # get tickers from table <current_security>
     df = get_eod_tickers(tickers)
@@ -492,7 +492,9 @@ def get_eod_file_path(today):
 def get_eod_tickers(tickers):
         
     sql = """
-    SELECT "SecurityID", "Ticker" FROM current_security where "DataSource" = 'YH'
+        SELECT mds."SecurityID", mds."SourceID" as "Ticker" 
+        FROM mkt_data_source mds join current_security cs on mds."SecurityID" = cs."SecurityID" 
+        where mds."Source" = 'YH'
     """
     
     df = db_utils.get_sql_df(sql)

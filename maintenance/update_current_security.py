@@ -47,11 +47,9 @@ WHERE "SecurityID" = ANY(%s)
 
 _SQL_INSERT = """
 INSERT INTO current_security
-    ("SecurityID", "SecurityName", "Currency", "AssetClass", "AssetType",
-     "ISIN", "CUSIP", "BB_UNIQUE", "BB_GLOBAL", "Ticker", "insert_time")
+    ("SecurityID", "SecurityName", "ISIN", "CUSIP", "BB_UNIQUE", "BB_GLOBAL", "Ticker", "insert_time")
 VALUES
-    (%(SecurityID)s, %(SecurityName)s, %(Currency)s, %(AssetClass)s, %(AssetType)s,
-     %(ISIN)s, %(CUSIP)s, %(BB_UNIQUE)s, %(BB_GLOBAL)s, %(Ticker)s, NOW())
+    (%(SecurityID)s, %(SecurityName)s, %(ISIN)s, %(CUSIP)s, %(BB_UNIQUE)s, %(BB_GLOBAL)s, %(Ticker)s, NOW())
 ON CONFLICT ("SecurityID") DO NOTHING
 """
 

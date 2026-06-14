@@ -75,13 +75,13 @@ def _fetch_flat(conn, account_id: int, as_of_date) -> pd.DataFrame:
             """
             SELECT
                 COALESCE(ticker,        security_id, '(unnamed)')  AS ticker,
-                COALESCE(class,         '(unclassified)')          AS asset_class,
-                COALESCE(sc1,           '(unclassified)')          AS sc1,
-                COALESCE(broker,        '(unknown)')               AS broker,
-                COALESCE(region,        '(unknown)')               AS region,
-                COALESCE(country,       '(unknown)')               AS country,
-                COALESCE(sector,        '(unknown)')               AS sector,
-                COALESCE(currency,      '(unknown)')               AS currency,
+                COALESCE(class,         'Other')                   AS asset_class,
+                COALESCE(sc1,           'Other')                   AS sc1,
+                COALESCE(broker,        'Other')                   AS broker,
+                COALESCE(region,        'Other')                   AS region,
+                COALESCE(country,       'Other')                   AS country,
+                COALESCE(sector,        'Other')                   AS sector,
+                COALESCE(currency,      'Other')                   AS currency,
                 COALESCE(market_value,  0)                         AS market_value,
                 COALESCE(mg_es_95, 0)                         AS mg_es_95
             FROM position_var

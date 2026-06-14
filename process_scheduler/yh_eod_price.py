@@ -18,10 +18,12 @@ Output table: current_price (SecurityID, Ticker, Date, Open, High, Low, Close,
               Volume, PriceTime)
 
 Usage:
-  python yh_eod_price.py              # run normally
-  python yh_eod_price.py --register   # register/update job in scheduler
+  python yh_eod_price.py                    # run normally (date from proc_asof_date)
+  python yh_eod_price.py 2026-06-09         # override as-of date
+  python yh_eod_price.py --register         # register/update job in scheduler
 """
 
+import argparse
 import logging
 import os
 import sys
@@ -45,9 +47,16 @@ from detl.yh_extract import extract_eod
 
 
 if __name__ == '__main__':
-    if len(sys.argv) > 1 and sys.argv[1] == '--register':
+    parser = argparse.ArgumentParser()
+    parser.add_argument('asof_date', nargs='?', default=None,
+                        help='Override as-of date (YYYY-MM-DD)')
+    parser.add_argument('--register', action='store_true',
+                        help='Register/update job in scheduler')
+    args = parser.parse_args()
+
+    if args.register:
         from register import register_by_id
         register_by_id('yh_eod_price')
     else:
-        # extract_eod(['SPY', 'QQQ', 'IWM'])  # example tickers
-        extract_eod()  # all tickers from current_security
+        asof = datetime.strptime(args.asof_date, '%Y-%m-%d').date() if args.asof_date else None
+        extract_eod(asof_date=asof)

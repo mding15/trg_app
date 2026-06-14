@@ -577,8 +577,23 @@ CREATE TABLE public.position_var (
 	mg_var_99 numeric NULL,
 	mg_es_95 numeric NULL,
 	mg_es_99 numeric NULL,
+	mg_delta_var        numeric NULL,
+	mg_ir_var           numeric NULL,
+	mg_spread_var       numeric NULL,
+	mg_ir_duration_var  numeric NULL,
+	mg_ir_convexity_var numeric NULL,
+	mg_sp_duration_var  numeric NULL,
+	mg_sp_convexity_var numeric NULL,
 	CONSTRAINT position_var_pkey PRIMARY KEY (as_of_date, account_id, pos_id)
 );
+-- Migration (run once against live DB):
+-- ALTER TABLE position_var ADD COLUMN IF NOT EXISTS mg_delta_var        NUMERIC NULL;
+-- ALTER TABLE position_var ADD COLUMN IF NOT EXISTS mg_ir_var           NUMERIC NULL;
+-- ALTER TABLE position_var ADD COLUMN IF NOT EXISTS mg_spread_var       NUMERIC NULL;
+-- ALTER TABLE position_var ADD COLUMN IF NOT EXISTS mg_ir_duration_var  NUMERIC NULL;
+-- ALTER TABLE position_var ADD COLUMN IF NOT EXISTS mg_ir_convexity_var NUMERIC NULL;
+-- ALTER TABLE position_var ADD COLUMN IF NOT EXISTS mg_sp_duration_var  NUMERIC NULL;
+-- ALTER TABLE position_var ADD COLUMN IF NOT EXISTS mg_sp_convexity_var NUMERIC NULL;
 
 CREATE TABLE public.port_position_var (
 	port_id int4 NOT NULL,
@@ -662,3 +677,100 @@ CREATE TABLE public.port_position_var (
 	CONSTRAINT port_position_var_pkey PRIMARY KEY (port_id, pos_id),
 	CONSTRAINT port_position_var_port_id_fkey FOREIGN KEY (port_id) REFERENCES public.portfolio_info(port_id)
 );
+-- ---------------------------------------------------------------
+-- security_sensitivity  (security-level sensitivities per as_of_date)
+-- Populated by the VaR engine after calc_*_pnl runs.
+-- ---------------------------------------------------------------
+CREATE TABLE public.security_sensitivity (
+    as_of_date       DATE         NOT NULL,
+    security_id      VARCHAR(50)  NOT NULL,
+    tenor            FLOAT      NULL,
+    delta            FLOAT      NULL,
+    gamma            FLOAT      NULL,
+    vega             FLOAT      NULL,
+    iv               FLOAT      NULL,
+    ir_tenor         FLOAT      NULL,
+    yield            FLOAT      NULL,
+    duration         FLOAT      NULL,
+    convexity        FLOAT      NULL,
+    spread_duration  FLOAT        NULL,
+    spread_convexity FLOAT        NULL,
+    skewness         FLOAT      NULL,
+    kurtosis         FLOAT      NULL,
+    insert_time      TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    CONSTRAINT security_sensitivity_pkey PRIMARY KEY (as_of_date, security_id)
+);
+-- Migration (run once against live DB):
+-- ALTER TABLE security_sensitivity ADD COLUMN IF NOT EXISTS skewness FLOAT NULL;
+-- ALTER TABLE security_sensitivity ADD COLUMN IF NOT EXISTS kurtosis FLOAT NULL;
+
+-- ---------------------------------------------------------------
+-- security_pnl_stat  (P&L distribution statistics per security × date × type)
+-- Populated by process2/db_pnl_stat.py  (called by calc_*_pnl).
+-- ---------------------------------------------------------------
+CREATE TABLE security_pnl_stat (
+    as_of_date  DATE         NOT NULL,
+    security_id VARCHAR(32)  NOT NULL,
+    pnl_type    VARCHAR(16)  NOT NULL,
+    min         FLOAT,
+    max         FLOAT,
+    mean        FLOAT,
+    std         FLOAT,
+    q_1pct      FLOAT,
+    q_5pct      FLOAT,
+    q_50pct     FLOAT,
+    q_95pct     FLOAT,
+    q_99pct     FLOAT,
+    es_5pct     FLOAT,
+    es_1pct     FLOAT,
+    insert_time TIMESTAMP DEFAULT NOW(),
+    PRIMARY KEY (as_of_date, security_id, pnl_type)
+);
+
+-- ---------------------------------------------------------------
+-- model_security_stat  (distribution statistics per model × security)
+-- Populated by models/collect_model_securities.py.
+-- ---------------------------------------------------------------
+CREATE TABLE public.model_security_stat (
+    model_id    VARCHAR(50)  NOT NULL,
+    model       VARCHAR(50)  NOT NULL,
+    category    VARCHAR(20)  NOT NULL,
+    folder      VARCHAR(200) NOT NULL,
+    security_id VARCHAR(50)  NOT NULL,
+    min         FLOAT        NULL,
+    max         FLOAT        NULL,
+    mean        FLOAT        NULL,
+    std         FLOAT        NULL,
+    q_1pct      FLOAT        NULL,
+    q_5pct      FLOAT        NULL,
+    q_50pct     FLOAT        NULL,
+    q_95pct     FLOAT        NULL,
+    q_99pct     FLOAT        NULL,
+    es_5pct     FLOAT        NULL,
+    es_1pct     FLOAT        NULL,
+    insert_time TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    CONSTRAINT model_security_stat_pkey PRIMARY KEY (model_id, model, security_id)
+);
+
+CREATE TABLE public.security_xref (
+	id serial4 NOT NULL,
+	"REF_ID" varchar(200) NOT NULL,
+	"REF_TYPE" varchar(20) NOT NULL,
+	"SecurityID" varchar(20) NULL,
+	"DataSource" varchar(100) NULL,
+	"DateAdded" date DEFAULT CURRENT_DATE NOT NULL,
+	CONSTRAINT security_xref_pkey PRIMARY KEY (id)
+);
+
+CREATE TABLE public.security_info (
+	id serial4 NOT NULL,
+	"SecurityID" varchar(20) NULL,
+	"SecurityName" varchar(1000) NOT NULL,
+	"Currency" varchar(20) NULL,
+	"AssetClass" varchar(20) NULL,
+	"AssetType" varchar(20) NULL,
+	"DataSource" varchar(100) NULL,
+	"DateAdded" date DEFAULT CURRENT_DATE NULL,
+	CONSTRAINT security_info_pkey PRIMARY KEY (id)
+);
+

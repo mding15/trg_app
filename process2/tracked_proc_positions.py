@@ -76,7 +76,7 @@ def _load_tracked_portfolios(cur, account_id=None) -> list[dict]:
             """
             SELECT port_id, account_id, port_name, upload_dt
             FROM portfolio_info
-            WHERE port_type = 'tracked' AND account_id = %s
+            WHERE port_type = 'tracked' AND filename != 'auto feed' AND account_id = %s
             """,
             (account_id,),
         )
@@ -85,7 +85,7 @@ def _load_tracked_portfolios(cur, account_id=None) -> list[dict]:
             """
             SELECT port_id, account_id, port_name, upload_dt
             FROM portfolio_info
-            WHERE port_type = 'tracked'
+            WHERE port_type = 'tracked' AND filename != 'auto feed'
             """
         )
     rows = [

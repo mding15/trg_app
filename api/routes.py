@@ -1214,8 +1214,9 @@ def get_historical(username):
     account_id, err = _get_account_id(username=username)
     if err:
         return err
+    freq = request.args.get('freq', 'weekly')
     try:
-        data = get_historical_data(account_id)
+        data = get_historical_data(account_id, freq=freq)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
     return jsonify(data)

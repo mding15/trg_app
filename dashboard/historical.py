@@ -137,8 +137,12 @@ def _read_limits(account_id):
 
 # ── DB helpers (phase-1 charts) ────────────────────────────────────────────────
 
-def _read_historical_db(account_id: int) -> list[dict]:
-    """Return up to 5 weekly db_portfolio_summary rows in chronological order."""
+def _read_historical_db(account_id: int, freq: str = 'weekly') -> list[dict]:
+    """Return db_portfolio_summary rows in chronological order.
+
+    freq='daily':  up to 90 most recent dates.
+    freq='weekly': up to 5 dates spaced ≥7 days apart.
+    """
     with pg_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -151,14 +155,17 @@ def _read_historical_db(account_id: int) -> list[dict]:
     if not all_dates:
         return []
 
-    # Greedy weekly selection: pick a date only if ≥7 days before the last picked
-    selected, last_picked = [], None
-    for d in all_dates:
-        if last_picked is None or (last_picked - d).days >= 7:
-            selected.append(d)
-            last_picked = d
-            if len(selected) == 5:
-                break
+    if freq == 'daily':
+        selected = list(reversed(all_dates[:90]))
+    else:
+        selected, last_picked = [], None
+        for d in all_dates:
+            if last_picked is None or (last_picked - d).days >= 7:
+                selected.append(d)
+                last_picked = d
+                if len(selected) == 5:
+                    break
+        selected.reverse()
 
     with pg_connection() as conn:
         with conn.cursor() as cur:
@@ -299,124 +306,132 @@ def _read_breakdowns_db(account_id: int, dates: list) -> dict:
 
 # ── Public entry point ─────────────────────────────────────────────────────────
 
-def get_historical_data(account_id):
-    limits    = _read_limits(account_id)
-    rows      = _read_historical_db(account_id)
-    db_limits = _read_limits_db(account_id)
-    alloc_lim = limits['allocation']
+def get_historical_data(account_id, freq='weekly'):
+    _daily_keys  = ['volatility', 'var', 'sharpeVol', 'sharpeVar', 'pnlVsVar', 'concentrations']
+    _weekly_keys = ['assetAlloc', 'assetVar', 'regionAlloc', 'regionVar',
+                    'industryAlloc', 'industryVar', 'ccyAlloc', 'ccyVar']
+
+    rows = _read_historical_db(account_id, freq)
 
     if not rows:
         empty = {'series': []}
-        return {
-            'labels': [],
-            'charts': {k: empty for k in [
-                'volatility', 'var', 'sharpeVol', 'sharpeVar', 'pnlVsVar', 'concentrations',
-                'assetAlloc', 'assetVar', 'regionAlloc', 'regionVar',
-                'industryAlloc', 'industryVar', 'ccyAlloc', 'ccyVar',
-            ]},
-        }
+        keys  = _daily_keys if freq == 'daily' else _weekly_keys
+        return {'labels': [], 'charts': {k: empty for k in keys}}
 
-    db_labels = [r['as_of_date'].strftime('%m/%d/%y') for r in rows]
+    date_fmt  = '%m/%d' if freq == 'daily' else '%m/%d/%y'
+    db_labels = [r['as_of_date'].strftime(date_fmt) for r in rows]
     dates     = [r['as_of_date'] for r in rows]
 
-    # VaR K/M unit — determined by the first non-None var_1d_95 value
-    var_vals  = [r['var_1d_95'] for r in rows]
-    first_var = next((v for v in var_vals if v is not None), None)
-    var_unit    = 'K' if (first_var is not None and first_var < 1_000_000) else 'M'
-    var_divisor = 1_000 if var_unit == 'K' else 1_000_000
+    if freq == 'daily':
+        db_limits = _read_limits_db(account_id)
 
-    def _scale(v):
-        return round(float(v) / var_divisor, 1) if v is not None else None
+        var_vals    = [r['var_1d_95'] for r in rows]
+        first_var   = next((v for v in var_vals if v is not None), None)
+        var_unit    = 'K' if (first_var is not None and first_var < 1_000_000) else 'M'
+        var_divisor = 1_000 if var_unit == 'K' else 1_000_000
 
-    var_limit_raw    = db_limits.get('var_limit_dollar')
-    var_limit_scaled = round(float(var_limit_raw) / var_divisor, 1) if var_limit_raw else None
-    sharpe_var_target = db_limits.get('target_sharpe_var') or 0.15
+        def _scale(v):
+            return round(float(v) / var_divisor, 1) if v is not None else None
 
-    conc_data = _read_concentrations_db(account_id, dates)
-    bd        = _read_breakdowns_db(account_id, dates)
+        var_limit_raw     = db_limits.get('var_limit_dollar')
+        var_limit_scaled  = round(float(var_limit_raw) / var_divisor, 1) if var_limit_raw else None
+        sharpe_var_target = db_limits.get('target_sharpe_var') or 0.15
 
-    def _bd_series(breakdown_type, metric):
-        cats = bd.get(breakdown_type, {})
-        return [{'name': cat, 'data': cats[cat][metric]} for cat in cats]
+        conc_data = _read_concentrations_db(account_id, dates)
 
-    return {
-        'labels': db_labels,
-        'charts': {
-            'volatility': {
-                'series': [{'name': 'Volatility', 'data': [r['volatility'] for r in rows]}],
+        return {
+            'labels': db_labels,
+            'charts': {
+                'volatility': {
+                    'series': [{'name': 'Volatility', 'data': [r['volatility'] for r in rows]}],
+                },
+                'var': {
+                    'series': [{'name': 'VaR 95% 1D', 'data': [_scale(v) for v in var_vals]}],
+                    'limit':  var_limit_scaled,
+                    'unit':   var_unit,
+                },
+                'sharpeVol': {
+                    'series': [{'name': 'Sharpe Ratio (Vol)', 'data': [r['sharpe_vol'] for r in rows]}],
+                },
+                'sharpeVar': {
+                    'series': [{'name': 'Sharpe Ratio (VaR)', 'data': [r['sharpe_var'] for r in rows]}],
+                    'target': sharpe_var_target,
+                },
+                'pnlVsVar': {
+                    'series': [
+                        {'name': f'PnL (${var_unit})',     'data': [_scale(r['day_pnl']) for r in rows]},
+                        {'name': f'VaR 95% (${var_unit})', 'data': [-_scale(r['var_1d_95']) if _scale(r['var_1d_95']) is not None else None for r in rows]},
+                    ],
+                    'unit': var_unit,
+                },
+                'concentrations': {
+                    'series': [
+                        {
+                            'name':  cat,
+                            'data':  conc_data[cat]['max_weight'],
+                            'limit': next(
+                                (v for v in reversed(conc_data[cat]['limit_value']) if v is not None),
+                                None,
+                            ),
+                        }
+                        for cat in _CONC_CATEGORIES
+                        if cat in conc_data
+                    ],
+                },
             },
-            'var': {
-                'series': [{'name': 'VaR 95% 1D', 'data': [_scale(v) for v in var_vals]}],
-                'limit':  var_limit_scaled,
-                'unit':   var_unit,
+        }
+
+    else:  # weekly
+        limits    = _read_limits(account_id)
+        alloc_lim = limits['allocation']
+        bd        = _read_breakdowns_db(account_id, dates)
+
+        def _bd_series(breakdown_type, metric):
+            cats = bd.get(breakdown_type, {})
+            return [{'name': cat, 'data': cats[cat][metric]} for cat in cats]
+
+        return {
+            'labels': db_labels,
+            'charts': {
+                'assetAlloc': {
+                    'series':     _bd_series('asset_class', 'weight'),
+                    'limit':      alloc_lim['asset_class'],
+                    'limitLabel': f"Equity limit {alloc_lim['asset_class']:.0f}%",
+                },
+                'assetVar': {
+                    'series':     _bd_series('asset_class', 'var_contrib'),
+                    'limit':      alloc_lim['asset_class'],
+                    'limitLabel': f"Equity limit {alloc_lim['asset_class']:.0f}%",
+                },
+                'regionAlloc': {
+                    'series':     _bd_series('region', 'weight'),
+                    'limit':      alloc_lim['region'],
+                    'limitLabel': f"N.America limit {alloc_lim['region']:.0f}%",
+                },
+                'regionVar': {
+                    'series':     _bd_series('region', 'var_contrib'),
+                    'limit':      alloc_lim['region_var'],
+                    'limitLabel': f"N.America limit {alloc_lim['region_var']:.0f}%",
+                },
+                'industryAlloc': {
+                    'series':     _bd_series('industry', 'weight'),
+                    'limit':      alloc_lim['industry'],
+                    'limitLabel': f"Top sector limit {alloc_lim['industry']:.0f}%",
+                },
+                'industryVar': {
+                    'series':     _bd_series('industry', 'var_contrib'),
+                    'limit':      alloc_lim['industry_var'],
+                    'limitLabel': f"Top sector limit {alloc_lim['industry_var']:.0f}%",
+                },
+                'ccyAlloc': {
+                    'series':     _bd_series('currency', 'weight'),
+                    'limit':      alloc_lim['currency'],
+                    'limitLabel': f"USD limit {alloc_lim['currency']:.0f}%",
+                },
+                'ccyVar': {
+                    'series':     _bd_series('currency', 'var_contrib'),
+                    'limit':      alloc_lim['currency_var'],
+                    'limitLabel': f"USD limit {alloc_lim['currency_var']:.0f}%",
+                },
             },
-            'sharpeVol': {
-                'series': [{'name': 'Sharpe Ratio (Vol)', 'data': [r['sharpe_vol'] for r in rows]}],
-            },
-            'sharpeVar': {
-                'series': [{'name': 'Sharpe Ratio (VaR)', 'data': [r['sharpe_var'] for r in rows]}],
-                'target': sharpe_var_target,
-            },
-            'pnlVsVar': {
-                'series': [
-                    {'name': f'PnL (${var_unit})',      'data': [_scale(r['day_pnl'])   for r in rows]},
-                    {'name': f'VaR 95% (${var_unit})',  'data': [-_scale(r['var_1d_95']) if _scale(r['var_1d_95']) is not None else None for r in rows]},
-                ],
-                'unit': var_unit,
-            },
-            'concentrations': {
-                'series': [
-                    {
-                        'name':  cat,
-                        'data':  conc_data[cat]['max_weight'],
-                        'limit': next(
-                            (v for v in reversed(conc_data[cat]['limit_value']) if v is not None),
-                            None,
-                        ),
-                    }
-                    for cat in _CONC_CATEGORIES
-                    if cat in conc_data
-                ],
-            },
-            'assetAlloc': {
-                'series':     _bd_series('asset_class', 'weight'),
-                'limit':      alloc_lim['asset_class'],
-                'limitLabel': f"Equity limit {alloc_lim['asset_class']:.0f}%",
-            },
-            'assetVar': {
-                'series':     _bd_series('asset_class', 'var_contrib'),
-                'limit':      alloc_lim['asset_class'],
-                'limitLabel': f"Equity limit {alloc_lim['asset_class']:.0f}%",
-            },
-            'regionAlloc': {
-                'series':     _bd_series('region', 'weight'),
-                'limit':      alloc_lim['region'],
-                'limitLabel': f"N.America limit {alloc_lim['region']:.0f}%",
-            },
-            'regionVar': {
-                'series':     _bd_series('region', 'var_contrib'),
-                'limit':      alloc_lim['region_var'],
-                'limitLabel': f"N.America limit {alloc_lim['region_var']:.0f}%",
-            },
-            'industryAlloc': {
-                'series':     _bd_series('industry', 'weight'),
-                'limit':      alloc_lim['industry'],
-                'limitLabel': f"Top sector limit {alloc_lim['industry']:.0f}%",
-            },
-            'industryVar': {
-                'series':     _bd_series('industry', 'var_contrib'),
-                'limit':      alloc_lim['industry_var'],
-                'limitLabel': f"Top sector limit {alloc_lim['industry_var']:.0f}%",
-            },
-            'ccyAlloc': {
-                'series':     _bd_series('currency', 'weight'),
-                'limit':      alloc_lim['currency'],
-                'limitLabel': f"USD limit {alloc_lim['currency']:.0f}%",
-            },
-            'ccyVar': {
-                'series':     _bd_series('currency', 'var_contrib'),
-                'limit':      alloc_lim['currency_var'],
-                'limitLabel': f"USD limit {alloc_lim['currency_var']:.0f}%",
-            },
-        },
-    }
+        }

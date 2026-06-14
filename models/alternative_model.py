@@ -7,13 +7,14 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from psycopg2.extras import execute_batch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 log = logging.getLogger(__name__)
 
 from database2 import pg_connection
-from utils import var_utils
+from utils import var_utils, stat_utils
 
 OUTPUT_DIR = Path(__file__).resolve().parent.parent / "test_output"
 
@@ -27,6 +28,21 @@ def get_model_info() -> pd.DataFrame:
     with pg_connection() as conn:
         with conn.cursor() as cur:
             cur.execute("SELECT * FROM alternative_model ORDER BY security_id")
+            cols = [d[0] for d in cur.description]
+            rows = cur.fetchall()
+    return pd.DataFrame(rows, columns=cols)
+
+
+def get_model_info_for(security_ids: list) -> pd.DataFrame:
+    """Fetch alternative_model rows for the given security_ids only."""
+    if not security_ids:
+        return pd.DataFrame()
+    with pg_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT * FROM alternative_model WHERE security_id = ANY(%s) ORDER BY security_id",
+                (security_ids,),
+            )
             cols = [d[0] for d in cur.description]
             rows = cur.fetchall()
     return pd.DataFrame(rows, columns=cols)
@@ -122,9 +138,7 @@ def alternative_model_adhoc(correl: dict) -> pd.DataFrame:
     Securities not present in correl are dropped. beta and sigma are recomputed
     from the supplied proxy_correl using the same formula as alternative_model_unadj.
     """
-    model_info = get_model_info()
-
-    model_info = model_info[model_info["security_id"].isin(correl)].copy()
+    model_info = get_model_info_for(list(correl.keys()))
     if model_info.empty:
         return pd.DataFrame()
 
@@ -134,6 +148,61 @@ def alternative_model_adhoc(correl: dict) -> pd.DataFrame:
 
     cf_dist = corefactor_dist(model_info)
     return alternative_model(model_info, cf_dist)
+
+
+# ── DB ───────────────────────────────────────────────────────────────────────
+
+_STAT_COL_RENAME = {
+    'q-1%':  'q_1pct',
+    'q-5%':  'q_5pct',
+    'q-50%': 'q_50pct',
+    'q-95%': 'q_95pct',
+    'q-99%': 'q_99pct',
+    'es-5%': 'es_5pct',
+    'es-1%': 'es_1pct',
+}
+
+_TABLE_COLS = [
+    'model_id', 'model', 'category', 'folder', 'security_id',
+    'min', 'max', 'mean', 'std',
+    'q_1pct', 'q_5pct', 'q_50pct', 'q_95pct', 'q_99pct',
+    'es_5pct', 'es_1pct',
+]
+
+
+def _save_stat_to_db(dist: pd.DataFrame, model_info: pd.DataFrame, model_id: str) -> None:
+    """Compute dist_stat() and upsert results into model_security_stat."""
+    stats = stat_utils.dist_stat(dist)
+    stats = stats.reset_index().rename(columns={'SecurityID': 'security_id'})
+    stats = stats.rename(columns=_STAT_COL_RENAME)
+
+    subclass_map = model_info.set_index('security_id')['asset_subclass']
+    stats['model']    = stats['security_id'].map(subclass_map)
+    stats['category'] = 'PRICE'
+    stats['folder']   = 'None'
+    stats['model_id'] = model_id
+
+    db_df = stats[[c for c in _TABLE_COLS if c in stats.columns]].replace({float('nan'): None})
+
+    col_sql      = ', '.join(f'"{c}"' for c in _TABLE_COLS)
+    placeholders = ', '.join(f'%({c})s' for c in _TABLE_COLS)
+    update_sql   = ', '.join(
+        f'"{c}" = EXCLUDED."{c}"'
+        for c in _TABLE_COLS if c not in ('model_id', 'model', 'security_id')
+    )
+    sql = f"""
+        INSERT INTO model_security_stat ({col_sql})
+        VALUES ({placeholders})
+        ON CONFLICT (model_id, model, security_id) DO UPDATE SET {update_sql}
+    """
+
+    rows = db_df.to_dict(orient='records')
+    with pg_connection() as conn:
+        with conn.cursor() as cur:
+            execute_batch(cur, sql, rows)
+        conn.commit()
+
+    log.info("  %d rows upserted into model_security_stat", len(rows))
 
 
 # ── Run model ────────────────────────────────────────────────────────────────
@@ -159,6 +228,10 @@ def run_model() -> None:
 
     log.info("Saving distributions to VaR store …")
     var_utils.save_dist(dist, category="PRICE")
+
+    log.info("Saving distribution statistics to model_security_stat …")
+    model_id = var_utils.get_model_id()
+    _save_stat_to_db(dist, model_info, model_id)
 
     log.info("Generating security distributions using unadjusted volatilities …")
     dist = alternative_model_unadj(model_info, cf_dist)

@@ -27,8 +27,9 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 import pandas as pd
 
 from trg_config import config
-from database2 import pg_connection
+from database2 import pg_connection, get_proc_asof_date
 from utils import hdf_utils, var_utils, stat_utils
+from process2.db_pnl_stat import save_pnl_stat, save_security_sensitivity
 
 _LINEAR_ASSET_CLASSES = ['Equity', 'Alternative', 'Commodity', 'REIT', 'Cash']
 _BOND_LINEAR_TYPES    = ['Fund', 'ETF']
@@ -38,17 +39,24 @@ def _get_linear_securities() -> pd.DataFrame:
     with pg_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                'SELECT "SecurityID", "AssetClass", "AssetType" FROM current_security '
-                'WHERE "AssetClass" = ANY(%s) '
-                'OR ("AssetClass" = %s AND "AssetType" = ANY(%s))',
+                """
+                SELECT DISTINCT cs."SecurityID", si."AssetClass", si."AssetType"
+                FROM current_security cs
+                JOIN security_info si ON si."SecurityID" = cs."SecurityID"
+                WHERE si."AssetClass" = ANY(%s)
+                   OR (si."AssetClass" = %s AND si."AssetType" = ANY(%s))
+                """,
                 (_LINEAR_ASSET_CLASSES, 'Bond', _BOND_LINEAR_TYPES),
             )
             rows = cur.fetchall()
     return pd.DataFrame(rows, columns=['SecurityID', 'AssetClass', 'AssetType'])
 
 
-def calc_linear_product_pnl() -> pd.DataFrame:
+def calc_linear_product_pnl(as_of_date=None) -> pd.DataFrame:
     """Return P&L DataFrame (rows = scenarios, columns = SecurityIDs) and save to HDF."""
+    if as_of_date is None:
+        as_of_date = get_proc_asof_date()
+
     # Step 1: Linear product securities from current_security
     securities = _get_linear_securities()
     print(f'Linear product securities found: {len(securities)}')
@@ -67,6 +75,16 @@ def calc_linear_product_pnl() -> pd.DataFrame:
     # Step 4: P&L = Sensitivity(1) × MarketValue($1) × distribution = distribution
     pnl = dist.copy()
 
+    # Save security-level sensitivities (delta=1; skewness/kurtosis from P&L distribution)
+    sens = pd.DataFrame({
+        'SecurityID': pnl.columns,
+        'Delta':      1.0,
+        'Skewness':   pnl.skew(),
+        'Kurtosis':   pnl.kurt(),
+    })
+    n = save_security_sensitivity(sens, as_of_date)
+    print(f'Sensitivities written to DB: {n} rows')
+
     # Step 5: Save one Series per security under 'PNL/{SecurityID}', same as VaR.h5 layout
     output_file = config['VaR_DIR'] / 'security_pnl.h5'
     hdf_utils.save(pnl, 'PNL', output_file)
@@ -74,10 +92,8 @@ def calc_linear_product_pnl() -> pd.DataFrame:
 
     # Step 6: Compute and save P&L distribution statistics
     stats = stat_utils.dist_stat(pnl)
-    ts = datetime.now().strftime('%Y%m%d_%H%M%S')
-    stat_file = config['LOG_DIR'] / f'security_pnl_stat_{ts}.csv'
-    stats.to_csv(stat_file)
-    print(f'Stats saved: {stat_file}')
+    n = save_pnl_stat(stats, as_of_date, 'LINEAR')
+    print(f'Stats written to DB: {n} rows (pnl_type=LINEAR)')
 
     return pnl
 

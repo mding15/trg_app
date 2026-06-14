@@ -11,6 +11,7 @@ Usage:
     python update_table.py current_security --key SecurityID
     python update_table.py current_security --key SecurityID --dry-run
     python update_table.py yh_stock_price   --key SecurityID:Date --file prices.xlsx --sheet Sheet1
+    python update_table.py security_info                          # key inferred from TABLE_KEYS
 
 Arguments:
     table       Target database table name                (required, positional)
@@ -18,7 +19,8 @@ Arguments:
 Options:
     --key       Key column(s) for the WHERE clause, colon-separated (optional)
                 e.g. --key SecurityID  or  --key SecurityID:Date
-                If omitted, the first column of the Excel sheet is used.
+                If omitted, the key is looked up in TABLE_KEYS. If the table is
+                not listed there, the script exits with an error.
     --file      Excel filename inside maintenance/Excel/  (default: <table>.xlsx)
     --sheet     Sheet name to read                        (default: <table>)
     --dry-run   Preview rows and column mapping without writing to DB
@@ -37,6 +39,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from database2 import pg_connection
 
 EXCEL_DIR = Path(__file__).resolve().parent / "Excel"
+
+# Tables whose key can be omitted from --key; colon-separated composite keys
+# are stored as lists.  Add more entries here as needed.
+TABLE_KEYS: dict[str, list[str]] = {
+    'security_info':      ['SecurityID'],
+    'current_security':   ['SecurityID'],
+    'mkt_data_source':    ['SecurityID'],
+    'security_attribute': ['security_id'],
+    'bond_price':         ['security_id', 'price_date'],
+    'security_xref':      ['SecurityID', 'REF_TYPE'],
+}
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -133,10 +146,17 @@ def run(file: str | None, sheet: str | None, table: str, key_cols: list[str], dr
 
     log.info(f"  {len(df)} rows · {len(df.columns)} columns")
 
-    # ── Default key to first column if not specified ──────────────────────────
+    # ── Resolve key columns ───────────────────────────────────────────────────
     if not key_cols:
-        key_cols = [str(df.columns[0])]
-        log.info(f"  --key not specified — using first column as key: '{key_cols[0]}'")
+        if table in TABLE_KEYS:
+            key_cols = TABLE_KEYS[table]
+            log.info(f"  --key not specified — using registered key for '{table}': {key_cols}")
+        else:
+            log.error(
+                f"--key is required for table '{table}' (not listed in TABLE_KEYS).\n"
+                f"  Specify --key COL or --key COL1:COL2, or add '{table}' to TABLE_KEYS."
+            )
+            sys.exit(1)
 
     # ── Fetch DB columns ──────────────────────────────────────────────────────
     log.info(f"Fetching columns for table '{table}' from database …")
@@ -244,7 +264,7 @@ def main() -> None:
     parser.add_argument("table",     metavar="TABLE",
                         help="Target database table name")
     parser.add_argument("--key",     default=None, metavar="COL[:COL...]",
-                        help="Key column(s) for the WHERE clause, colon-separated (e.g. SecurityID or SecurityID:Date). Defaults to the first column of the Excel sheet.")
+                        help="Key column(s) for the WHERE clause, colon-separated (e.g. SecurityID or SecurityID:Date). If omitted, looked up in TABLE_KEYS; error if not listed.")
     parser.add_argument("--file",    default=None, metavar="FILENAME",
                         help="Excel filename inside maintenance/Excel/ (default: <table>.xlsx)")
     parser.add_argument("--sheet",   default=None, metavar="SHEET",

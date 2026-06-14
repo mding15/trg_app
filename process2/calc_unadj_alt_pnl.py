@@ -31,8 +31,12 @@ def _get_alternative_securities() -> pd.DataFrame:
     with pg_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                'SELECT "SecurityID", "AssetClass", "AssetType" FROM current_security '
-                'WHERE "AssetClass" = %s',
+                """
+                SELECT DISTINCT cs."SecurityID", si."AssetClass", si."AssetType"
+                FROM current_security cs
+                JOIN security_info si ON si."SecurityID" = cs."SecurityID"
+                WHERE si."AssetClass" = %s
+                """,
                 ('Alternative',),
             )
             rows = cur.fetchall()

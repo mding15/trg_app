@@ -6,7 +6,8 @@ PARAMETER_OPTIONS = {
     "benchmark":    ["SP500", "MSCI World", "100/0 Blend", "90/10 Blend", "80/20 Blend", "70/30 Blend", "60/40 Blend", "50/50 Blend", "40/60 Blend", "30/70 Blend", "20/80 Blend", "10/90 Blend","0/100 Blend"],
     "base_currency": ["USD", "EUR", "GBP", "JPY", "AUD", "CHF"],
     "beta_key":     ["SP500-1Y", "SP500-3Y","MSCI World", "MSCI EM", "Bloomberg Agg", "Russell 2000"],
-    "exp_return":   ["Historical", "CAPM", "Black-Litterman", "Factor", "Equilibrium", "MS-Capital-Market", "User-Defined"],
+    "exp_return":   ["MS-Capital-Market", "User-Defined"],
+    #"exp_return":   ["Historical", "CAPM", "Black-Litterman", "Factor", "Equilibrium", "MS-Capital-Market", "User-Defined"],
 }
 
 

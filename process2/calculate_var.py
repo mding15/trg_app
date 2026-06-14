@@ -78,7 +78,8 @@ def _run_var(
     Positions without PnL data in the HDF store receive NaN metrics.
     Raises on engine or DB failure — caller decides whether to skip or abort.
     """
-    var_metrics = var_engine.calc_var(positions)
+    sens        = var_engine.calc_sensitivity_metrics(positions, as_of_date)
+    var_metrics = var_engine.calc_var(positions, sensitivity_metrics=sens)
     result = positions.set_index('pos_id').join(var_metrics, how='left').reset_index()
     n = insert_results(result, as_of_date)
     logger.info(f"{label}: {len(positions)} positions, {n} rows inserted")

@@ -47,6 +47,7 @@ from trg_config import config
 from database2 import pg_connection, get_proc_asof_date
 from models import bond_risk as br
 from utils import hdf_utils, var_utils, stat_utils
+from process2.db_pnl_stat import save_pnl_stat, save_security_sensitivity
 
 # Treasury yield curve column names and their corresponding tenors (years)
 _YIELD_COLS   = ['bc_1month', 'bc_2month', 'bc_3month', 'bc_6month',
@@ -300,14 +301,20 @@ def calc_treasury_pnl(as_of_date: date = None) -> pd.DataFrame:
     # Step 5: Save one Series per security under 'PNL/{SecurityID}'
     output_file = config['VaR_DIR'] / 'security_pnl.h5'
     hdf_utils.save(pnl, 'PNL', output_file)
+    hdf_utils.save(pnl, 'IR_PNL', output_file)
     print(f'Saved: {output_file}')
 
-    # Step 6: Distribution statistics → timestamped CSV in log/
+    # Save security-level sensitivities + skewness/kurtosis from P&L distribution
+    pnl_stats = pd.DataFrame({'Skewness': pnl.skew(), 'Kurtosis': pnl.kurt()})
+    pnl_stats.index.name = 'SecurityID'
+    sens = securities.set_index('SecurityID').join(pnl_stats, how='left').reset_index()
+    n = save_security_sensitivity(sens, as_of_date)
+    print(f'Sensitivities written to DB: {n} rows')
+
+    # Step 6: Distribution statistics → timestamped CSV in log/ and DB
     stats     = stat_utils.dist_stat(pnl)
-    ts        = datetime.now().strftime('%Y%m%d_%H%M%S')
-    stat_file = config['LOG_DIR'] / f'treasury_pnl_stat_{ts}.csv'
-    stats.to_csv(stat_file)
-    print(f'Stats saved: {stat_file}')
+    n = save_pnl_stat(stats, as_of_date, 'TREASURY')
+    print(f'Stats written to DB: {n} rows (pnl_type=TREASURY)')
 
     return pnl
 

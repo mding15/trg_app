@@ -167,16 +167,16 @@ def update_security_info(positions: pd.DataFrame, asof_date=None) -> pd.DataFram
                 )
 
             # ── Step 2: exclude where not in current risk model ───────────────
-            modeled_ids = _fetch_modeled_security_ids()
-            logger.info(f'Fetched {len(modeled_ids)} modeled SecurityIDs')
+            # modeled_ids = _fetch_modeled_security_ids()
+            # logger.info(f'Fetched {len(modeled_ids)} modeled SecurityIDs')
 
-            not_modeled = positions['SecurityID'].notna() & ~positions['SecurityID'].isin(modeled_ids)
-            positions.loc[not_modeled, 'excluded']       = True
-            positions.loc[not_modeled, 'exclude_reason'] = 'not modeled'
-            if not_modeled.any():
-                logger.warning(
-                    f'{not_modeled.sum()} positions not in current risk model → excluded'
-                )
+            # not_modeled = positions['SecurityID'].notna() & ~positions['SecurityID'].isin(modeled_ids)
+            # positions.loc[not_modeled, 'excluded']       = True
+            # positions.loc[not_modeled, 'exclude_reason'] = 'not modeled'
+            # if not_modeled.any():
+            #     logger.warning(
+            #         f'{not_modeled.sum()} positions not in current risk model → excluded'
+            #     )
 
             # collect known SecurityIDs for batch fetching
             known_ids = positions.loc[positions['SecurityID'].notna(), 'SecurityID'].unique().tolist()
