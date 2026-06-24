@@ -294,7 +294,7 @@ def _fetch_params_batch(cur, port_ids: list) -> dict:
         WHERE pi.port_type = 'tracked'
           AND pi.port_id = ANY(%s)
 
-        UNION ALL
+        UNION 
 
         SELECT pi.port_id,
                pp."RiskHorizon", pp."TailMeasure", pp."BaseCurrency", pp."Benchmark", pp."ExpectedReturn"
@@ -346,84 +346,227 @@ def _fetch_weights_account(cur, account_id: int, as_of_date) -> dict | None:
     return {code: round(mv / total * 100, 1) for code, mv in class_mvs.items()}
 
 
-# ── Handler functions called from routes.py ───────────────────────────────────
-# Fetches the user's processed portfolios to populate the What-If analysis page.
+# ── Batch helpers for tracked (account-based) portfolios ──────────────────────
+
+def _fetch_weights_account_batch(cur, account_ids: list) -> dict:
+    """Returns {account_id: {class_code: pct}} for each account using the latest date in position_var."""
+    if not account_ids:
+        return {}
+    cur.execute(
+        """
+        SELECT
+            pv.account_id,
+            COALESCE(acm.class_code, 'ot') AS class_code,
+            SUM(pv.market_value) AS mv
+        FROM position_var pv
+        LEFT JOIN asset_class_map acm ON acm.asset_class = pv."class"
+        WHERE pv.account_id = ANY(%s)
+          AND pv.as_of_date = (
+              SELECT MAX(pv2.as_of_date) FROM position_var pv2
+              WHERE pv2.account_id = pv.account_id
+          )
+          AND pv.market_value IS NOT NULL
+        GROUP BY pv.account_id, COALESCE(acm.class_code, 'ot')
+        """,
+        (account_ids,),
+    )
+    raw: dict = {}
+    for acct_id, class_code, mv in cur.fetchall():
+        raw.setdefault(acct_id, {})[class_code] = float(mv)
+    result = {}
+    for acct_id, class_mvs in raw.items():
+        total = sum(class_mvs.values())
+        if total == 0:
+            continue
+        result[acct_id] = {code: round(mv / total * 100, 1) for code, mv in class_mvs.items()}
+    return result
+
+
+def _fetch_account_params_batch(cur, account_ids: list) -> dict:
+    """Returns {account_id: params dict} from account_parameters."""
+    if not account_ids:
+        return {}
+    cur.execute(
+        """
+        SELECT account_id, risk_horizon, risk_measure, base_currency, benchmark, exp_return
+        FROM account_parameters
+        WHERE account_id = ANY(%s)
+        """,
+        (account_ids,),
+    )
+    return {
+        row[0]: {
+            'risk_horizon':  row[1],
+            'risk_measure':  row[2],
+            'base_currency': row[3],
+            'benchmark':     row[4],
+            'exp_return':    row[5],
+        }
+        for row in cur.fetchall()
+    }
+
+
+# ── Entry builders (module-level so they can be reused) ───────────────────────
+
+def _weights_and_conc(weights: dict | None) -> tuple:
+    w = weights or _NULL_WEIGHTS.copy()
+    conc_input = {k: (w.get(k) or 0) for k in _CLASS_KEYS}
+    conc = _calc_conc(conc_input) if any(conc_input.values()) else None
+    return w, conc
+
+
+def _normalize_tracked(row) -> dict:
+    acct_id, name, as_of_date, aum, exp_ret_pct, volatility, var_1d_95, sharpe_vol, sharpe_var = row
+    return {
+        'id':          acct_id,
+        'name':        name,
+        'as_of_date':  as_of_date.strftime('%d/%m/%y') if as_of_date else '—',
+        'aum':         aum,
+        'exp_ret_pct': exp_ret_pct,
+        'vol':         volatility,
+        'vrisk':       var_1d_95,
+        'sharpeVol':   sharpe_vol,
+        'sharpeVar':   sharpe_var,
+    }
+
+
+def _normalize_adhoc(port_id: int, name: str, summary: dict) -> dict:
+    as_of_str = summary.get('asOfDate', '')
+    try:
+        from datetime import date
+        as_of_fmt = date.fromisoformat(as_of_str).strftime('%d/%m/%y')
+    except Exception:
+        as_of_fmt = as_of_str or '—'
+    return {
+        'id':          port_id + 1_000_000,
+        'name':        name,
+        'as_of_date':  as_of_fmt,
+        'aum':         summary.get('aum'),
+        'exp_ret_pct': summary.get('expectedReturn'),
+        'vol':         summary.get('volatility'),
+        'vrisk':       summary.get('var1d95'),
+        'sharpeVol':   summary.get('sharpeVol'),
+        'sharpeVar':   summary.get('sharpeVar'),
+    }
+
+
+def _to_entry(data: dict, weights: dict | None, params: dict | None) -> dict:
+    w, conc = _weights_and_conc(weights)
+    p = params or {}
+    exp_ret_pct = data.get('exp_ret_pct')
+    return {
+        'id':            data['id'],
+        'name':          data['name'],
+        'as_of_date':    data['as_of_date'],
+        'size':          round(float(data['aum']) / 1_000_000, 2) if data.get('aum') else 0.0,
+        'weights':       w,
+        'exp_ret':       round(float(exp_ret_pct) / 100, 4) if exp_ret_pct is not None else None,
+        'vol':           round(float(data['vol']), 4) if data.get('vol') is not None else None,
+        'vrisk':         round(float(data['vrisk']), 2) if data.get('vrisk') is not None else None,
+        'sharpeVol':     round(float(data['sharpeVol']), 4) if data.get('sharpeVol') is not None else None,
+        'sharpeVar':     round(float(data['sharpeVar']), 4) if data.get('sharpeVar') is not None else None,
+        'conc':          conc,
+        'risk_horizon':  p.get('risk_horizon'),
+        'risk_measure':  p.get('risk_measure'),
+        'base_currency': p.get('base_currency'),
+        'benchmark':     p.get('benchmark'),
+        'exp_return':    p.get('exp_return'),
+    }
+
+
+# ── Focused fetch functions ────────────────────────────────────────────────────
+
+def _fetch_tracked_portfolios(cur, username: str) -> tuple:
+    """Fetch tracked portfolio rows, weights, and params for the given user.
+    Returns (rows, weights_by_account, params_by_account).
+    """
+    cur.execute(
+        """
+        SELECT p.account_id, a.account_name, p.as_of_date, p.aum,
+               p.expected_return, p.volatility, p.var_1d_95, p.sharpe_vol, p.sharpe_var
+        FROM db_portfolio_summary p
+        JOIN account a ON a.account_id = p.account_id
+        JOIN account_access aa ON aa.account_id = p.account_id
+        JOIN "user" u ON u.user_id = aa.user_id
+        WHERE u.username = %s
+          AND p.as_of_date = (
+              SELECT MAX(p2.as_of_date) FROM db_portfolio_summary p2
+              WHERE p2.account_id = p.account_id
+          )
+        """,
+        (username,),
+    )
+    rows = cur.fetchall()
+    acct_ids          = [r[0] for r in rows]
+    weights_by_account = _fetch_weights_account_batch(cur, acct_ids)
+    params_by_account  = _fetch_account_params_batch(cur, acct_ids)
+    return rows, weights_by_account, params_by_account
+
+
+def _fetch_adhoc_portfolios(conn, cur, username: str, limit: int) -> tuple:
+    """Fetch adhoc portfolio rows, summaries, weights, and params for the given user.
+    Returns (rows, summaries_by_port, weights_by_port, params_by_port).
+    """
+    from dashboard.adhoc_positions_calc import get_positions_batch, compute_portfolio_summary as _compute_adhoc
+
+    cur.execute(
+        """
+        SELECT pi.port_id, pi.port_name
+        FROM portfolio_info pi
+        JOIN "user" u ON u.client_id = pi.client_id
+        WHERE u.username = %s
+          AND pi.port_type = 'adhoc'
+        ORDER BY pi.port_id DESC
+        LIMIT %s
+        """,
+        (username, limit),
+    )
+    rows        = cur.fetchall()
+    port_ids    = [r[0] for r in rows]
+    dfs_by_port = get_positions_batch(conn, port_ids)
+    summaries   = {pid: _compute_adhoc(pid, df) for pid, df in dfs_by_port.items()}
+    weights_by_port = _fetch_weights_batch(cur, port_ids)
+    params_by_port  = _fetch_params_batch(cur, port_ids)
+    return rows, summaries, weights_by_port, params_by_port
+
+
+# ── Public handler ─────────────────────────────────────────────────────────────
+
 def get_whatif_portfolios(username: str, account_id: int | None = None) -> list:
-    """Return the user's processed portfolios with real asset-class weights from position data."""
+    """Return the user's portfolios (tracked + adhoc) for the What-If page.
+
+    Tracked portfolios are sourced from db_portfolio_summary, identified by account_id.
+    Adhoc portfolios are sourced from portfolio_info / port_position_var, identified by
+    port_id + 1_000_000 to avoid ID collisions with account_ids.
+    Tracked entries appear first; total capped at 20.
+    If account_id is provided, that entry is moved to the front.
+    """
+    LIMIT = 20
+
     with pg_connection() as conn:
         with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT p.port_id, p.port_name, p.as_of_date, p.mv,
-                       p.exp_ret, p.vol_pct, p.var_1d_95, p.sharpe_vol, p.sharpe_var
-                FROM whatif_portfolio_metrics p
-                JOIN "user" u ON p.client_id = u.client_id
-                WHERE u.username = %s AND p.account_id IS NULL
-                ORDER BY p.port_id DESC
-                LIMIT 10
-                """,
-                (username,),
-            )
-            rows = cur.fetchall()
+            tracked_rows, weights_by_account, params_by_account = _fetch_tracked_portfolios(cur, username)
+            adhoc_limit = max(0, LIMIT - len(tracked_rows))
+            adhoc_rows, adhoc_summaries, weights_by_port, params_by_port = _fetch_adhoc_portfolios(conn, cur, username, adhoc_limit)
 
-            account_row = None
-            if account_id is not None:
-                cur.execute(
-                    """
-                    SELECT port_id, port_name, as_of_date, mv,
-                           exp_ret, vol_pct, var_1d_95, sharpe_vol, sharpe_var
-                    FROM whatif_portfolio_metrics
-                    WHERE account_id = %s
-                    """,
-                    (account_id,),
-                )
-                account_row = cur.fetchone()
-
-            # Batch-fetch weights for all uploaded portfolios — single query.
-            port_ids = [row[0] for row in rows]
-            weights_by_port = _fetch_weights_batch(cur, port_ids)
-
-            # Fetch weights for the account portfolio if present.
-            account_weights = None
-            if account_row is not None:
-                account_weights = _fetch_weights_account(cur, account_id, account_row[2])
-
-            # Batch-fetch risk parameters for all portfolios.
-            all_port_ids = port_ids + ([account_row[0]] if account_row is not None else [])
-            params_by_port = _fetch_params_batch(cur, all_port_ids)
-
-    def _to_entry(row, weights, params=None):
-        port_id, name, as_of_date, mv, exp_ret, vol_pct, var_1d_95, sharpe_vol, sharpe_var = row
-        size = round(float(mv) / 1_000_000, 2) if mv else 0.0
-        # _calc_conc needs numeric values; treat None as 0, skip if no data at all.
-        conc_input = {k: (weights.get(k) or 0) for k in _CLASS_KEYS}
-        conc = _calc_conc(conc_input) if any(conc_input.values()) else None
-        p = params or {}
-        return {
-            'id':            port_id,
-            'name':          name,
-            'as_of_date':    as_of_date.strftime('%d/%m/%y') if as_of_date else '—',
-            'size':          size,
-            'weights':       weights,
-            'exp_ret':       round(float(exp_ret), 4) if exp_ret is not None else None,
-            'vol':           round(float(vol_pct), 4) if vol_pct is not None else None,
-            'vrisk':         round(float(var_1d_95), 2) if var_1d_95 is not None else None,
-            'sharpeVol':     round(float(sharpe_vol), 4) if sharpe_vol is not None else None,
-            'sharpeVar':     round(float(sharpe_var), 4) if sharpe_var is not None else None,
-            'conc':          conc,
-            'risk_horizon':  p.get('risk_horizon'),
-            'risk_measure':  p.get('risk_measure'),
-            'base_currency': p.get('base_currency'),
-            'benchmark':     p.get('benchmark'),
-            'exp_return':    p.get('exp_return'),
-        }
-
-    result = [
-        _to_entry(row, weights_by_port.get(row[0], _NULL_WEIGHTS.copy()), params_by_port.get(row[0]))
-        for row in rows
+    tracked_entries = [
+        _to_entry(_normalize_tracked(row), weights_by_account.get(row[0]), params_by_account.get(row[0]))
+        for row in tracked_rows
     ]
-    if account_row is not None:
-        result.insert(0, _to_entry(account_row, account_weights or _NULL_WEIGHTS.copy(), params_by_port.get(account_row[0])))
+    adhoc_entries = [
+        _to_entry(_normalize_adhoc(port_id, name, adhoc_summaries[port_id]), weights_by_port.get(port_id), params_by_port.get(port_id))
+        for port_id, name in adhoc_rows
+        if port_id in adhoc_summaries
+    ]
+
+    result = tracked_entries + adhoc_entries
+
+    # If account_id is provided, that entry is moved to the front.
+    if account_id is not None:
+        idx = next((i for i, e in enumerate(result) if e['id'] == account_id), None)
+        if idx is not None and idx != 0:
+            result.insert(0, result.pop(idx))
+
     return result
 
 
@@ -854,6 +997,7 @@ def get_whatif_alternatives_panel(account_id: int | None) -> dict:
 # ── Tests ─────────────────────────────────────────────────────────────────────
 
 _TESTS = {}
+_TEST_USER = "test1@trg.com"
 
 def _test(name):
     """Decorator that registers a named test."""
@@ -874,10 +1018,38 @@ def _test_alt_original(account_id, _portfolios):
 
 @_test('portfolios')
 def _test_portfolios(account_id, _portfolios):
+    import csv
     print("=== get_whatif_portfolios ===")
-    portfolios = get_whatif_portfolios("testuser", account_id=account_id)
+    portfolios = get_whatif_portfolios(_TEST_USER, account_id=account_id)
     for p in portfolios:
         print(p)
+    if not portfolios:
+        return
+
+    out_dir = os.path.join(os.path.dirname(__file__), 'test_output')
+    os.makedirs(out_dir, exist_ok=True)
+
+    # ── Main portfolio file (exclude nested fields) ────────────────────────────
+    NESTED = {'conc', 'weights'}
+    main_fields = [k for k in portfolios[0].keys() if k not in NESTED]
+    main_path = os.path.join(out_dir, 'whatif_portfolios.csv')
+    with open(main_path, 'w', newline='') as f:
+        writer = csv.DictWriter(f, fieldnames=main_fields)
+        writer.writeheader()
+        for p in portfolios:
+            writer.writerow({k: p[k] for k in main_fields})
+    print(f"Written to {main_path}")
+
+    # ── Concentrations file (one row per portfolio × conc row) ─────────────────
+    conc_path = os.path.join(out_dir, 'whatif_portfolios_conc.csv')
+    with open(conc_path, 'w', newline='') as f:
+        writer = csv.DictWriter(f, fieldnames=['id', 'name', 'ratio', 'limit'])
+        writer.writeheader()
+        for p in portfolios:
+            for row in (p.get('conc') or []):
+                writer.writerow({'id': p['id'], **row})
+    print(f"Written to {conc_path}")
+
 
 
 @_test('allocations')
@@ -932,7 +1104,7 @@ def test(names=None, account_id=1011):
         return
 
     # Pre-fetch portfolios once — needed by allocations and metrics tests
-    portfolios = get_whatif_portfolios("testuser", account_id=account_id)
+    portfolios = get_whatif_portfolios(_TEST_USER, account_id=account_id)
 
     for name in to_run:
         _TESTS[name](account_id, portfolios)
@@ -950,5 +1122,11 @@ if __name__ == '__main__':
         '--account', type=int, default=1011,
         help='account_id to use (default: 1011)',
     )
+    parser.add_argument(
+        '--username', type=str, default=None,
+        help=f'username to use (default: {_TEST_USER})',
+    )
     args = parser.parse_args()
+    if args.username:
+        _TEST_USER = args.username
     test(names=args.tests or None, account_id=args.account)

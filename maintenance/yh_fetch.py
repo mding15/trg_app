@@ -5,9 +5,15 @@ Subcommands:
     hist    — call api_hist_price(): writes hist_price and hist_dividend CSVs
     eod     — call api_eod_price():  writes eod_price CSV (uses today's date)
     profile — call api_stock_profiles(): writes profile CSV
+    update  — call extract_yh_price(): fetches historical prices and writes to DB + HDF
 
-Tickers can be supplied as a colon-separated string or via a CSV file (--file).
-The CSV file must have a 'ticker' column (see CSV/ticker.csv for an example).
+hist, eod, and update accept mutually exclusive input (default: CSV/ticker.csv):
+    --ticker      colon-separated tickers
+    --security-id colon-separated SecurityIDs (resolved to tickers via mkt_data_source)
+    --file        CSV with a 'ticker' and/or 'security_id' column
+    (no args)     defaults to CSV/ticker.csv
+
+profile requires tickers as a positional arg or --file (CSV with 'ticker' column).
 
 Output files (maintenance/CSV/):
     hist_price_YYYYMMDD_HHMMSS.csv
@@ -16,12 +22,20 @@ Output files (maintenance/CSV/):
     profile_YYYYMMDD_HHMMSS.csv
 
 Usage:
-    python maintenance/yh_fetch.py hist    SPY:AAPL:QQQ
+    python maintenance/yh_fetch.py hist                                   # uses CSV/ticker.csv
+    python maintenance/yh_fetch.py hist    --ticker SPY:AAPL:QQQ
+    python maintenance/yh_fetch.py hist    --security-id T10000108:T10001583
     python maintenance/yh_fetch.py hist    --file CSV/ticker.csv
-    python maintenance/yh_fetch.py eod     SPY:AAPL:QQQ
+    python maintenance/yh_fetch.py eod                                    # uses CSV/ticker.csv
+    python maintenance/yh_fetch.py eod     --ticker SPY:AAPL:QQQ
+    python maintenance/yh_fetch.py eod     --security-id T10000108:T10001583
     python maintenance/yh_fetch.py eod     --file CSV/ticker.csv
     python maintenance/yh_fetch.py profile SPY:AAPL:QQQ
     python maintenance/yh_fetch.py profile --file CSV/ticker.csv
+    python maintenance/yh_fetch.py update                                 # uses CSV/ticker.csv
+    python maintenance/yh_fetch.py update  --ticker SPY:AAPL:QQQ
+    python maintenance/yh_fetch.py update  --security-id T10000108:T10001583
+    python maintenance/yh_fetch.py update  --file CSV/ticker.csv
 """
 from __future__ import annotations
 
@@ -35,6 +49,7 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from detl.yh_extract import api_hist_price, api_eod_price, api_stock_profiles
+from mkt_data.mkt_data_extract import extract_yh_price, get_yh_source_id
 
 CSV_DIR = Path(__file__).resolve().parent / "CSV"
 
@@ -62,6 +77,48 @@ def _tickers_from_file(file_path: str) -> list[str]:
     if "ticker" not in df.columns:
         raise ValueError(f"CSV file must have a 'ticker' column (found: {list(df.columns)})")
     return [t.strip().upper() for t in df["ticker"].dropna() if str(t).strip()]
+
+
+def _ids_from_file(file_path: str) -> tuple[list[str], list[str]]:
+    """Read tickers and/or security_ids from a CSV file for the update subcommand."""
+    path = Path(file_path)
+    if not path.exists():
+        raise FileNotFoundError(f"File not found: {path}")
+    df = pd.read_csv(path)
+    tickers     = [t.strip().upper() for t in df["ticker"].dropna()      if str(t).strip()] if "ticker"      in df.columns else []
+    security_ids = [s.strip()         for s in df["security_id"].dropna() if str(s).strip()] if "security_id" in df.columns else []
+    if not tickers and not security_ids:
+        raise ValueError(
+            f"CSV must have a 'ticker' or 'security_id' column (found: {list(df.columns)})"
+        )
+    return tickers, security_ids
+
+
+# ── Ticker resolution ─────────────────────────────────────────────────────────
+
+def _resolve_tickers(security_ids: list[str], log: logging.Logger) -> list[str]:
+    """Look up YH tickers (SourceID) for a list of SecurityIDs via mkt_data_source."""
+    df = get_yh_source_id(security_ids=security_ids)
+    if df.empty:
+        log.warning(f"No YH tickers found in mkt_data_source for security_ids={security_ids}")
+        return []
+    tickers = df["SourceID"].tolist()
+    log.info(f"Resolved security_ids={security_ids} → tickers={tickers}")
+    return tickers
+
+
+def _parse_tickers_input(args, log: logging.Logger) -> list[str]:
+    """Parse --ticker / --security-id / --file / default and return a flat ticker list."""
+    if args.ticker:
+        return [t.strip().upper() for t in args.ticker.split(":") if t.strip()]
+    if args.security_id:
+        security_ids = [s.strip() for s in args.security_id.split(":") if s.strip()]
+        return _resolve_tickers(security_ids, log)
+    file_path = args.file or str(CSV_DIR / "ticker.csv")
+    file_tickers, file_security_ids = _ids_from_file(file_path)
+    log.info(f"Loaded from {file_path}: {len(file_tickers)} ticker(s), {len(file_security_ids)} security_id(s)")
+    resolved = _resolve_tickers(file_security_ids, log) if file_security_ids else []
+    return file_tickers + resolved
 
 
 # ── Write helper ──────────────────────────────────────────────────────────────
@@ -112,6 +169,22 @@ def run_eod(tickers: list[str], log: logging.Logger) -> None:
         _write_csv(prices_df, "eod_price", log)
 
 
+def run_update(tickers: list[str] | None, security_ids: list[str] | None, log: logging.Logger) -> None:
+    if tickers and security_ids:
+        log.info(f"extract_yh_price  tickers={tickers}  security_ids={security_ids}")
+    elif tickers:
+        log.info(f"extract_yh_price  tickers={tickers}")
+    elif security_ids:
+        log.info(f"extract_yh_price  security_ids={security_ids}")
+    else:
+        log.info("extract_yh_price  (all YH securities in mkt_data_source)")
+    extract_yh_price(
+        security_ids=security_ids or None,
+        tickers=tickers or None,
+    )
+    log.info("extract_yh_price completed — DB and HDF updated")
+
+
 # ── CLI ───────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
@@ -130,47 +203,75 @@ if __name__ == "__main__":
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
+    # hist and eod: --ticker / --security-id / --file / default CSV/ticker.csv
     for cmd, help_text in [
-        ("hist",    "Fetch historical prices and dividends via api_hist_price()"),
-        ("eod",     "Fetch end-of-day prices via api_eod_price()"),
-        ("profile", "Fetch stock profiles via api_stock_profiles()"),
+        ("hist", "Fetch historical prices and dividends via api_hist_price()"),
+        ("eod",  "Fetch end-of-day prices via api_eod_price()"),
     ]:
         sub = subparsers.add_parser(cmd, help=help_text)
-        source = sub.add_mutually_exclusive_group(required=True)
-        source.add_argument(
-            "tickers",
-            metavar="TICKER1:TICKER2:...",
-            nargs="?",
-            help="Colon-separated list of tickers",
-        )
-        source.add_argument(
-            "--file", "-f",
-            metavar="CSV_FILE",
-            help="CSV file with a 'ticker' column (e.g. CSV/ticker.csv)",
-        )
+        grp = sub.add_mutually_exclusive_group()
+        grp.add_argument("--ticker",      "-t", metavar="TICK1:TICK2:...", help="Colon-separated tickers")
+        grp.add_argument("--security-id", "-s", metavar="SEC1:SEC2:...",  help="Colon-separated SecurityIDs")
+        grp.add_argument("--file",        "-f", metavar="CSV_FILE",       help="CSV with 'ticker' and/or 'security_id' column (default: CSV/ticker.csv)")
+
+    # profile: positional tickers or --file (unchanged)
+    sub = subparsers.add_parser("profile", help="Fetch stock profiles via api_stock_profiles()")
+    src = sub.add_mutually_exclusive_group(required=True)
+    src.add_argument("tickers", metavar="TICKER1:TICKER2:...", nargs="?", help="Colon-separated tickers")
+    src.add_argument("--file", "-f", metavar="CSV_FILE", help="CSV file with a 'ticker' column")
+
+    # update: same options as hist/eod but passes both tickers and security_ids to extract_yh_price
+    sub = subparsers.add_parser("update", help="Fetch YH historical prices and write to DB + HDF via extract_yh_price()")
+    grp = sub.add_mutually_exclusive_group()
+    grp.add_argument("--ticker",      "-t", metavar="TICK1:TICK2:...", help="Colon-separated tickers")
+    grp.add_argument("--security-id", "-s", metavar="SEC1:SEC2:...",  help="Colon-separated SecurityIDs")
+    grp.add_argument("--file",        "-f", metavar="CSV_FILE",       help="CSV with 'ticker' and/or 'security_id' column (default: CSV/ticker.csv)")
 
     args = parser.parse_args()
     log = _setup_logger()
 
-    try:
-        if args.file:
-            tickers = _tickers_from_file(args.file)
-            log.info(f"Loaded {len(tickers)} tickers from {args.file}")
+    if args.command in ("hist", "eod"):
+        try:
+            tickers = _parse_tickers_input(args, log)
+        except (FileNotFoundError, ValueError) as e:
+            parser.error(str(e))
+        if not tickers:
+            parser.error("No tickers resolved.")
+        log.info(f"Command: {args.command}  |  Tickers: {tickers}")
+        if args.command == "hist":
+            run_hist(tickers, log)
         else:
-            tickers = [t.strip().upper() for t in args.tickers.split(":") if t.strip()]
-    except (FileNotFoundError, ValueError) as e:
-        parser.error(str(e))
+            run_eod(tickers, log)
 
-    if not tickers:
-        parser.error("No tickers provided.")
+    elif args.command == "update":
+        try:
+            if args.ticker:
+                tickers      = [t.strip().upper() for t in args.ticker.split(":") if t.strip()]
+                security_ids = []
+            elif args.security_id:
+                tickers      = []
+                security_ids = [s.strip() for s in args.security_id.split(":") if s.strip()]
+            else:
+                file_path = args.file or str(CSV_DIR / "ticker.csv")
+                tickers, security_ids = _ids_from_file(file_path)
+                log.info(f"Loaded from {file_path}: {len(tickers)} ticker(s), {len(security_ids)} security_id(s)")
+        except (FileNotFoundError, ValueError) as e:
+            parser.error(str(e))
+        log.info("Command: update")
+        run_update(tickers or None, security_ids or None, log)
 
-    log.info(f"Command: {args.command}  |  Tickers: {tickers}")
-
-    if args.command == "hist":
-        run_hist(tickers, log)
-    elif args.command == "eod":
-        run_eod(tickers, log)
-    else:
+    else:  # profile
+        try:
+            if args.file:
+                tickers = _tickers_from_file(args.file)
+                log.info(f"Loaded {len(tickers)} tickers from {args.file}")
+            else:
+                tickers = [t.strip().upper() for t in args.tickers.split(":") if t.strip()]
+        except (FileNotFoundError, ValueError) as e:
+            parser.error(str(e))
+        if not tickers:
+            parser.error("No tickers provided.")
+        log.info(f"Command: profile  |  Tickers: {tickers}")
         run_profile(tickers, log)
 
     log.info("─" * 60)

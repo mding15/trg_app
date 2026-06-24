@@ -23,7 +23,6 @@ import argparse
 import csv
 import logging
 import sys
-import time
 from datetime import datetime
 from pathlib import Path
 
@@ -35,11 +34,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from database2 import pg_connection
-from figi_utils import FIGI_COLUMNS, pick_representative
-
-OPENFIGI_API_KEY = '9a5b92a9-cae1-47ad-bb52-9d6293d18364'
-OPENFIGI_URL     = "https://api.openfigi.com/v3/mapping"
-OPENFIGI_BATCH   = 100
+from figi_utils import FIGI_COLUMNS, OPENFIGI_BATCH, fetch, pick_representative
 
 CSV_DIR = Path(__file__).parent / "CSV"
 
@@ -117,67 +112,6 @@ def cusip_to_isin(cusip: str, country_code: str = "US") -> str:
     return base + _isin_check_digit(base)
 
 
-# ── OpenFIGI ──────────────────────────────────────────────────────────────────
-
-def _map_identifiers(
-    id_pairs: list[tuple[str, str]],
-    id_type: str,
-    session: requests.Session,
-    log: logging.Logger,
-) -> pd.DataFrame:
-    """
-    Call OpenFIGI /v3/mapping for a list of identifiers.
-
-    id_pairs: list of (api_value, isin_tag) where:
-      - api_value is the identifier sent to OpenFIGI (ISIN or CUSIP)
-      - isin_tag is stored as 'isin' in result rows for home-exchange ranking
-
-    Retries on HTTP 429. Returns a long DataFrame with FIGI_COLUMNS.
-    """
-    headers = {
-        "Content-Type": "application/json",
-        "X-OPENFIGI-APIKEY": OPENFIGI_API_KEY,
-    }
-    rows: list[dict] = []
-    unmatched: list[str] = []
-    batches = [id_pairs[i:i + OPENFIGI_BATCH] for i in range(0, len(id_pairs), OPENFIGI_BATCH)]
-    log.info(f"  Calling OpenFIGI in {len(batches)} batch(es) of up to {OPENFIGI_BATCH} …")
-
-    for batch_num, batch in enumerate(batches, 1):
-        jobs = [{"idType": id_type, "idValue": api_val} for api_val, _ in batch]
-
-        while True:
-            resp = session.post(OPENFIGI_URL, json=jobs, headers=headers, timeout=30, verify=False)
-            if resp.status_code == 429:
-                wait = float(resp.headers.get("ratelimit-reset", 10)) + 0.5
-                log.warning(f"  Rate-limited — waiting {wait:.1f}s …")
-                time.sleep(wait)
-                continue
-            resp.raise_for_status()
-            break
-
-        for (api_val, isin_tag), result in zip(batch, resp.json()):
-            if "data" in result:
-                for rec in result["data"]:
-                    rows.append({"isin": isin_tag, **rec})
-            else:
-                msg = result.get("warning") or result.get("error") or "no data"
-                unmatched.append(f"{api_val}: {msg}")
-
-        log.info(f"  Batch {batch_num}/{len(batches)} done — {len(rows)} rows so far")
-
-    if unmatched:
-        log.warning(f"  {len(unmatched)} identifier(s) without data:")
-        for line in unmatched:
-            log.warning(f"    {line}")
-
-    df = pd.DataFrame(rows)
-    for col in FIGI_COLUMNS:
-        if col not in df.columns:
-            df[col] = pd.NA
-    return df[FIGI_COLUMNS] if not df.empty else pd.DataFrame(columns=FIGI_COLUMNS)
-
-
 # ── DB helpers ────────────────────────────────────────────────────────────────
 
 def _fetch_records(ref_type: str, limit: int | None) -> list[tuple[str, str]]:
@@ -212,18 +146,18 @@ _UPSERT_SQL = """
          %(figi)s, %(comp_figi)s, %(shareclass_figi)s,
          %(sectype)s, %(sectype2)s, %(mkt_sector)s, NOW())
     ON CONFLICT (figi) DO UPDATE SET
-        security_id     = EXCLUDED.security_id,
-        name            = EXCLUDED.name,
-        ticker          = EXCLUDED.ticker,
-        exch            = EXCLUDED.exch,
-        isin            = EXCLUDED.isin,
-        cusip           = EXCLUDED.cusip,
-        sedol           = EXCLUDED.sedol,
+        security_id     = COALESCE(NULLIF(EXCLUDED.security_id, ''), security_lookup.security_id),
+        name            = COALESCE(NULLIF(EXCLUDED.name,        ''), security_lookup.name),
+        ticker          = COALESCE(NULLIF(EXCLUDED.ticker,      ''), security_lookup.ticker),
+        exch            = COALESCE(NULLIF(EXCLUDED.exch,        ''), security_lookup.exch),
+        isin            = COALESCE(NULLIF(EXCLUDED.isin,        ''), security_lookup.isin),
+        cusip           = COALESCE(NULLIF(EXCLUDED.cusip,       ''), security_lookup.cusip),
+        sedol           = COALESCE(NULLIF(EXCLUDED.sedol,       ''), security_lookup.sedol),
         comp_figi       = EXCLUDED.comp_figi,
         shareclass_figi = EXCLUDED.shareclass_figi,
-        sectype         = EXCLUDED.sectype,
-        sectype2        = EXCLUDED.sectype2,
-        mkt_sector      = EXCLUDED.mkt_sector,
+        sectype         = COALESCE(NULLIF(EXCLUDED.sectype,     ''), security_lookup.sectype),
+        sectype2        = COALESCE(NULLIF(EXCLUDED.sectype2,    ''), security_lookup.sectype2),
+        mkt_sector      = COALESCE(NULLIF(EXCLUDED.mkt_sector,  ''), security_lookup.mkt_sector),
         update_at       = NOW()
 """
 
@@ -439,7 +373,7 @@ def run(mode: str, limit: int | None, dry_run: bool, use_csv: bool, compare: boo
         return
 
     with requests.Session() as session:
-        long_df = _map_identifiers(id_pairs, api_id_type, session, log)
+        long_df = fetch(id_pairs, api_id_type, session, log)
 
     log.info(f"  {len(long_df)} venue-level rows returned across {long_df['isin'].nunique()} ISIN(s)")
 
@@ -490,7 +424,7 @@ def run_test(mode: str, value: str) -> None:
         log.info(f"Test lookup for CUSIP: {value}  (derived ISIN: {derived_isin})")
 
     with requests.Session() as session:
-        long_df = _map_identifiers(id_pairs, api_id_type, session, log)
+        long_df = fetch(id_pairs, api_id_type, session, log)
 
     if long_df.empty:
         log.warning("No data returned from OpenFIGI.")

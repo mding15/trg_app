@@ -153,19 +153,20 @@ def lookup_figi(figi: str) -> list[dict]:
     return _raw_items(api_call("/v3/mapping", [{"idType": "ID_BB_GLOBAL", "idValue": figi}]))
 
 
-def lookup_symbol(symbol: str, exchange: str = "US", sectype2: str = "Common Stock") -> list[dict]:
-    """ID_EXCH_SYMBOL requires securityType2 (default: Common Stock).
-    Common values: ETF, Mutual Fund, Preferred, Corporate Bond, Government Bond."""
-    job = {"idType": "ID_EXCH_SYMBOL", "idValue": symbol, "securityType2": sectype2}
+def lookup_symbol(symbol: str, exchange: str = None, sectype2: str = None) -> list[dict]:
+    """Common sectype2 values: Common Stock, ETF, Mutual Fund, Preferred, Corporate Bond, Government Bond."""
+    job = {"idType": "TICKER", "idValue": symbol}
     if exchange:
         job["exchCode"] = exchange.upper()
+    if sectype2:
+        job["securityType2"] = sectype2
     return _raw_items(api_call("/v3/mapping", [job]))
 
 
 # ── Output ────────────────────────────────────────────────────────────────────
 
 def write_raw_csv(raw_items: list[dict], isin: str = "", cusip: str = "") -> None:
-    """Write all raw API rows to CSV/figi_lookup.csv (overwrites on each run)."""
+    """Append raw API rows to CSV/figi_lookup.csv, skipping rows whose figi already exists."""
     CSV_DIR.mkdir(exist_ok=True)
     rows = [
         {
@@ -184,10 +185,26 @@ def write_raw_csv(raw_items: list[dict], isin: str = "", cusip: str = "") -> Non
         }
         for item in raw_items
     ]
-    with open(RAW_CSV_PATH, "w", newline="", encoding="utf-8") as f:
+
+    existing_figis: set[str] = set()
+    file_exists = RAW_CSV_PATH.exists()
+    if file_exists:
+        with open(RAW_CSV_PATH, newline="", encoding="utf-8") as f:
+            for row in csv.DictReader(f):
+                if row.get("figi"):
+                    existing_figis.add(row["figi"])
+
+    new_rows = [r for r in rows if not r["figi"] or r["figi"] not in existing_figis]
+    if not new_rows:
+        print("No new rows to append (all FIGIs already in file).")
+        return
+
+    with open(RAW_CSV_PATH, "a" if file_exists else "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=RAW_CSV_FIELDS)
-        writer.writeheader()
-        writer.writerows(rows)
+        if not file_exists:
+            writer.writeheader()
+        writer.writerows(new_rows)
+    print(f"Appended {len(new_rows)} new row(s) ({len(rows) - len(new_rows)} duplicate(s) skipped).")
 
 
 def print_results(label: str, results: list[dict]) -> None:
@@ -232,8 +249,8 @@ def prompt_interactive() -> tuple[str, str, str, str]:
         return "figi", input("Enter FIGI: ").strip().upper(), "", ""
     else:
         value    = input("Enter symbol: ").strip().upper()
-        exchange = input("Exchange code (default: US, e.g. LN, GY): ").strip().upper() or "US"
-        sectype2 = input("Security type (default: Common Stock): ").strip() or "Common Stock"
+        exchange = input("Exchange code (optional, e.g. US, LN, GY): ").strip().upper() or None
+        sectype2 = input("Security type (optional, e.g. Common Stock, ETF): ").strip() or None
         return "symbol", value, exchange, sectype2
 
 
@@ -247,17 +264,17 @@ def main():
     group.add_argument("--isin",   metavar="ISIN",   help="12-character ISIN identifier")
     group.add_argument("--figi",   metavar="FIGI",   help="12-character FIGI identifier")
     parser.add_argument("--exchange", metavar="CODE", default="",
-                        help="Exchange code filter (e.g. US, LN, GY). Defaults to US for symbol lookups.")
-    parser.add_argument("--sectype", metavar="TYPE", default="Common Stock",
-                        help="securityType2 for symbol lookup (default: Common Stock). "
-                             "Other values: ETF, Mutual Fund, Preferred, Corporate Bond, "
+                        help="Exchange code filter (e.g. US, LN, GY). Optional — omit to search all exchanges.")
+    parser.add_argument("--sectype", metavar="TYPE", default=None,
+                        help="securityType2 for symbol lookup (optional). "
+                             "Values: Common Stock, ETF, Mutual Fund, Preferred, Corporate Bond, "
                              "Government Bond, Index, Option, Future")
     args = parser.parse_args()
 
     if args.cusip:
         mode, value, exchange, sectype2 = "cusip", args.cusip.strip().upper(), "", ""
     elif args.symbol:
-        mode, value, exchange, sectype2 = "symbol", args.symbol.strip().upper(), args.exchange.strip().upper() or "US", args.sectype
+        mode, value, exchange, sectype2 = "symbol", args.symbol.strip().upper(), args.exchange.strip().upper() or None, args.sectype
     elif args.isin:
         mode, value, exchange, sectype2 = "isin", args.isin.strip().upper(), args.exchange.strip().upper(), ""
     elif args.figi:

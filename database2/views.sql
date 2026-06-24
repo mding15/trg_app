@@ -30,7 +30,8 @@ AS WITH base AS (
     (b.std_dollar / NULLIF(b.mv, 0::numeric))::double precision * sqrt((252 / p.days)::double precision) * 100::double precision AS vol_pct,
     b.var_dollar::double precision / sqrt(p.days::double precision) AS var_1d_95,
     (b.weighted_ret / NULLIF(b.mv, 0::numeric))::double precision / NULLIF((b.std_dollar / NULLIF(b.mv, 0::numeric))::double precision * sqrt((252 / p.days)::double precision), 0::double precision) AS sharpe_vol,
-    (b.weighted_ret / NULLIF(b.mv, 0::numeric))::double precision / NULLIF((b.var_dollar / NULLIF(b.mv, 0::numeric))::double precision * sqrt((252 / p.days)::double precision), 0::double precision) AS sharpe_var
+    (b.weighted_ret / NULLIF(b.mv, 0::numeric))::double precision / NULLIF((b.var_dollar / NULLIF(b.mv, 0::numeric))::double precision * sqrt((252 / p.days)::double precision), 0::double precision) AS sharpe_var,
+    NULL::double precision AS sharpe_es
    FROM base b
      JOIN port_info p ON b.port_id = p.port_id
 UNION
@@ -44,7 +45,8 @@ UNION
     ps.volatility AS vol_pct,
     ps.var_1d_95,
     ps.sharpe_vol,
-    ps.sharpe_var
+    ps.sharpe_var,
+    ps.sharpe_es
    FROM db_portfolio_summary ps,
     portfolio_info pi
   WHERE ps.account_id = pi.account_id AND ps.as_of_date = (( SELECT max(ps2.as_of_date) AS max

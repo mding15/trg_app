@@ -31,7 +31,14 @@ def create_security(
     return security_id
 
 
-def add_xref_if_missing(cur, security_id: str, ref_type: str, ref_id: str, data_source: str) -> None:
+def add_xref_if_missing(
+    cur,
+    security_id: str,
+    ref_type: str,
+    ref_id: str,
+    data_source: str,
+    exch_code: str = '',
+) -> None:
     """Insert a security_xref row if ref_id is non-empty and not already present."""
     if not ref_id or not ref_id.strip():
         return
@@ -43,8 +50,8 @@ def add_xref_if_missing(cur, security_id: str, ref_type: str, ref_id: str, data_
         return
     cur.execute(
         """
-        INSERT INTO security_xref ("REF_ID", "REF_TYPE", "SecurityID", "DataSource")
-        VALUES (%s, %s, %s, %s)
+        INSERT INTO security_xref ("REF_ID", "REF_TYPE", "SecurityID", "DataSource", "ExchCode")
+        VALUES (%s, %s, %s, %s, %s)
         """,
-        (ref_id, ref_type, security_id, data_source),
+        (ref_id, ref_type, security_id, data_source, exch_code or None),
     )

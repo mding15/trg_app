@@ -57,7 +57,6 @@ def run_model_wb():
 # xl_utils.add_df_to_excel(prices, wb, 'df')
 
 # model_id, submodel_id = 'M_20240531', 'Equity.12'
-# filename = 'ModelTest1.xlsx'
 # hist_prices=eq_prices
 # securities=equities
 def run_model(securities, hist_prices, model_id=None, submodel_id=None):

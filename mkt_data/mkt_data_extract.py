@@ -4,20 +4,32 @@ Created on Sat May 17 21:16:37 2025
 
 @author: mgdin
 """
+import sys
+from pathlib import Path
+# sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 import pandas as pd
 
-from database import db_utils
+from database2 import pg_connection
 from utils import mkt_data
 from detl import yh_extract
 from mkt_data import mkt_data_info, mkt_timeseries
 
 
+def _pg_df(sql, params=None):
+    with pg_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql, params)
+            cols = [desc[0] for desc in cur.description]
+            return pd.DataFrame(cur.fetchall(), columns=cols)
+
+
     
 # pull historical prices from YH, save to db and hdf, update mkt_data_info table
-def extract_yh_price(ticker_filter=None):
+def extract_yh_price(security_ids=None, tickers=None):
 
     # get SourceID and SecurityID
-    df = get_yh_source_id(ticker_filter)
+    df = get_yh_source_id(security_ids, tickers)
     
     # pull YH historical prices and save to db
     yh_extract.update_hist_price(df['SourceID'].to_list() )
@@ -31,30 +43,36 @@ def extract_yh_price(ticker_filter=None):
     # update table mkt_data_info
     mkt_data_info.update_stat_by_sec_id(df['SecurityID'].to_list(), 'YH', 'PRICE')
 
-# return df['SecurityID', 'SourceID']
-# in param: ticker_filter: filter for the tickers
-def get_yh_source_id(ticker_filter):
-    # YH tickers
-    query = """
-    select * from mkt_data_source where "Source" ='YH'
-    """
-    df =db_utils.get_sql_df(query)
+def get_yh_source_id(security_ids=None, tickers=None):
+    from database2 import pg_connection
+    if security_ids and tickers:
+        sql = """
+            SELECT * FROM mkt_data_source
+            WHERE "Source" = 'YH'
+              AND ("SecurityID" = ANY(%s) OR "SourceID" = ANY(%s))
+        """
+        params = (security_ids, tickers)
+    elif security_ids:
+        sql = 'SELECT * FROM mkt_data_source WHERE "Source" = \'YH\' AND "SecurityID" = ANY(%s)'
+        params = (security_ids,)
+    elif tickers:
+        sql = 'SELECT * FROM mkt_data_source WHERE "Source" = \'YH\' AND "SourceID" = ANY(%s)'
+        params = (tickers,)
+    else:
+        sql = 'SELECT * FROM mkt_data_source WHERE "Source" = \'YH\''
+        params = None
 
-    if ticker_filter:
-        df = df[df['SourceID'].isin(ticker_filter)]
-    
-    return df
+    with pg_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql, params)
+            cols = [desc[0] for desc in cur.description]
+            return pd.DataFrame(cur.fetchall(), columns=cols)
 
 # copy yh from  db to hdf
 def yh_db_2_hdf():
-    # YH tickers
-    query = """
-    select * from mkt_data_source where "Source" ='YH'
-    """
-    df =db_utils.get_sql_df(query)
+    df = _pg_df('SELECT * FROM mkt_data_source WHERE "Source" = \'YH\'')
     for _, row in df.iterrows():
         ticker, sec_id = row[['SourceID', 'SecurityID']]
-        # print(ticker, sec_id)
         copy_yh_from_db(ticker, sec_id)
     
 def yh_stat():
@@ -87,7 +105,7 @@ def copy_yh_from_db(ticker, sec_id):
     end_date = hdf_ts.index.max()
     
     # get data from db
-    df = db_utils.get_sql_df(f"select * from yh_stock_price where ticker= '{ticker}'")
+    df = _pg_df('SELECT * FROM yh_stock_price WHERE ticker = %s', (ticker,))
     if len(df) == 0:
         return
     
@@ -110,13 +128,17 @@ def test_copy_yh_from_db_hdf():
 #######################################
 # auxilary
 def get_current_sec_list():
-    df =db_utils.get_sql_df('select * from current_security')
-    sec_list = df['SecurityID'].to_list()
-    return sec_list    
-    
-def get_yh_sec_list():
-    query = """
-    select * from security_xref where "REF_TYPE" ='YH'
-    """
-    df =db_utils.get_sql_df(query)
+    df = _pg_df('SELECT "SecurityID" FROM current_security')
     return df['SecurityID'].to_list()
+
+def get_yh_sec_list():
+    df = _pg_df('SELECT "SecurityID" FROM security_xref WHERE "REF_TYPE" = \'YH\'')
+    return df['SecurityID'].to_list()
+
+
+def test():
+    extract_yh_price(tickers=['AAPL'])
+
+
+if __name__ == '__main__':
+    test()

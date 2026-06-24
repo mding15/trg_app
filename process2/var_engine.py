@@ -294,12 +294,20 @@ def calc_var(
 
     # Build position PnL matrix (only positions with available data)
     pos_pnl_cols = {}
+    unmatched = []
     for _, row in positions.iterrows():
         pid = row['pos_id']
         sid = row['SecurityID']
         mv  = row['MarketValue']
         if sid in sec_pnl.columns and mv is not None and not pd.isna(mv):
             pos_pnl_cols[pid] = sec_pnl[sid] * float(mv)
+        elif pd.notna(sid):
+            unmatched.append((pid, sid))
+
+    if unmatched:
+        print(f'No security_pnl match for {len(unmatched)} position(s):')
+        for pid, sid in unmatched:
+            print(f'  pos_id={pid}  SecurityID={sid}')
 
     if not pos_pnl_cols:
         return out

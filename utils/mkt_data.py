@@ -62,7 +62,7 @@ def save_market_data(df, source, category='PRICE'):
     df = df[~df.index.duplicated(keep='last')]
 
     # make sure value type is float
-    df= df.map(lambda x: x if isinstance(x, float) else np.NaN)
+    df= df.map(lambda x: x if isinstance(x, float) else np.nan)
 
     hdf.save(df, category, mkt_file)
     save_log(df, source, category)
@@ -76,7 +76,7 @@ def append_market_data(df, source, category='PRICE'):
     df.index = pd.to_datetime(df.index)
     
     # make sure value type is float
-    df= df.map(lambda x: x if isinstance(x, float) else np.NaN)
+    df= df.map(lambda x: x if isinstance(x, float) else np.nan)
     
     sec_ids = df.columns.to_list()
     start_date = df.index[0]
@@ -89,7 +89,7 @@ def append_market_data(df, source, category='PRICE'):
     prices = pd.concat([prices, df])
     
     hdf.save(prices, category, mkt_file)
-    save_log(df, source, category)
+    # save_log(df, source, category)
 
 
 def save_log(df, source, category):
@@ -114,6 +114,7 @@ def save_log(df, source, category):
     
     
     log = pd.concat([log, log_df])
+    log = log.drop_duplicates(subset=['SecurityID', 'Category'], keep='last')
     log.to_csv(log_file, index=False)
 
 

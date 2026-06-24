@@ -38,7 +38,7 @@ def yh_eod():
 # pull historical prices from YH, save to db and hdf, update mkt_data_info table
 def yh_pull(tickers=[]):
     with app.app_context():
-        mkt_data_extract.extract_yh_price(tickers)
+        mkt_data_extract.extract_yh_price(tickers=tickers)
 
 # for all yh_tickers, extract hist_prices and insert yh_stock_price table
 # def pull_yh_hist():

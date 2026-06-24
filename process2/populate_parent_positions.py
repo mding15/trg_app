@@ -7,8 +7,10 @@ into proc_positions. calculate_var.py then treats parent accounts identically to
 leaf accounts with no special-casing.
 
 Usage:
-    python populate_parent_positions.py                  # latest as_of_date
+    python populate_parent_positions.py                                         # all parents, latest date
     python populate_parent_positions.py --date 2025-09-30
+    python populate_parent_positions.py --parent-account-ids 1001:1002
+    python populate_parent_positions.py --date 2025-09-30 --parent-account-ids 1001:1002
 """
 from __future__ import annotations
 
@@ -231,7 +233,7 @@ def _insert_rows(df: pd.DataFrame, cur) -> int:
 
 # ── main ──────────────────────────────────────────────────────────────────────
 
-def run(as_of_date=None) -> None:
+def run(as_of_date=None, parent_account_ids: list[int] | None = None) -> None:
     if as_of_date is None:
         with pg_connection() as conn:
             with conn.cursor() as cur:
@@ -250,7 +252,18 @@ def run(as_of_date=None) -> None:
         return
 
     all_parent_ids = list(parent_map.keys())
-    logger.info(f'Parent accounts: {sorted(all_parent_ids)}')
+
+    if parent_account_ids is not None:
+        unknown = [p for p in parent_account_ids if p not in parent_map]
+        if unknown:
+            logger.warning(f'Requested parent_account_ids not found in account table: {unknown}')
+        all_parent_ids = [p for p in parent_account_ids if p in parent_map]
+        if not all_parent_ids:
+            logger.warning('No valid parent accounts to process — exiting.')
+            return
+        logger.info(f'Filtering to requested parent accounts: {sorted(all_parent_ids)}')
+    else:
+        logger.info(f'Parent accounts: {sorted(all_parent_ids)}')
 
     # Only fetch leaf accounts that feed into a parent — not all leaf accounts
     relevant_leaf_ids = list({
@@ -270,6 +283,8 @@ def run(as_of_date=None) -> None:
     merged_frames: list[pd.DataFrame] = []
 
     for parent_id in _sorted_parents(parent_map):
+        if parent_id not in all_parent_ids:
+            continue
         child_ids = parent_map[parent_id]
         merged = _merge_for_parent(all_positions, child_ids, parent_id)
         if merged.empty:
@@ -313,5 +328,12 @@ if __name__ == '__main__':
     )
     parser.add_argument('--date', metavar='YYYY-MM-DD',
                         help='as_of_date to process (default: latest in proc_positions)')
+    parser.add_argument('--parent-account-ids', metavar='ID1:ID2:...',
+                        help='Colon-separated parent account IDs to process (default: all)')
     args = parser.parse_args()
-    run(args.date)
+
+    parent_ids = None
+    if args.parent_account_ids:
+        parent_ids = [int(x) for x in args.parent_account_ids.split(':') if x.strip()]
+
+    run(args.date, parent_ids)

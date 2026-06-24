@@ -21,6 +21,8 @@ _ENGINE_TO_DB = {
     'ISIN':                 'isin',
     'CUSIP':                'cusip',
     'Ticker':               'ticker',
+    'BrokerName':           'broker_name',
+    'BrokerAccount':        'broker_account',
     'Quantity':             'quantity',
     'MarketValue':          'market_value',
     'Currency':             'currency',
@@ -80,7 +82,7 @@ _BOOL_COLS = {'is_option', 'excluded'}
 
 _TABLE_COLS = [
     'port_id', 'pos_id', 'as_of_date',
-    'security_id', 'security_name', 'isin', 'cusip', 'ticker', 'broker_account',
+    'security_id', 'security_name', 'isin', 'cusip', 'ticker', 'broker_name', 'broker_account',
     'quantity', 'market_value', 'total_cost', 'currency', 'last_price', 'last_price_date',
     'asset_class', 'asset_type', 'class', 'sc1', 'sc2',
     'country', 'region', 'sector', 'industry',

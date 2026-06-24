@@ -426,13 +426,14 @@ _DB_TO_ENGINE = {
     'gamma_var':              'GAMMA VaR',
     'total_cost':             'total_cost',
     'is_option':              'is_option',
+    'broker_name':            'BrokerName',
     'broker_account':         'BrokerAccount',
 }
 
 # Non-VaR columns present in both port_position_var and position_var
 _CLONE_POSITION_COLS = """
     pos_id, as_of_date,
-    security_id, security_name, isin, cusip, ticker,
+    security_id, security_name, isin, cusip, ticker, broker_name, broker_account,
     quantity, market_value, total_cost, currency, last_price, last_price_date,
     asset_class, asset_type, "class", sc1, sc2,
     country, region, sector, industry,

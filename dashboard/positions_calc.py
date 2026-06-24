@@ -248,6 +248,11 @@ def compute_portfolio_summary(account_id: int, as_of_date, df: pd.DataFrame) -> 
     else:
         sharpe_var = None
 
+    if total_return is not None and es_1d_95 and aum > 0:
+        sharpe_es = round(total_return / (es_1d_95 / aum) / math.sqrt(252), 4)
+    else:
+        sharpe_es = None
+
     # ── Other metrics ───────────────────────────────────────────────────────────
     tc = pd.to_numeric(df['total_cost'], errors='coerce').replace(0, float('nan'))
     if tc.notna().any():
@@ -277,9 +282,11 @@ def compute_portfolio_summary(account_id: int, as_of_date, df: pd.DataFrame) -> 
         "volatility":     volatility,
         "sharpeVol":      sharpe_vol,
         "sharpeVar":      sharpe_var,
+        "sharpeES":       sharpe_es,
         "beta":           mv_weighted_beta,
         "maxDrawdown":    -12.5,
         "topFiveConc":    top_five_conc,
+        "expectedReturn": round(total_return * 100, 4) if total_return is not None else None,
     }
 
 

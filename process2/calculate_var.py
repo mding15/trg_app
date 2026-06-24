@@ -31,10 +31,50 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 
 import pandas as pd
 
-from database2 import get_proc_asof_date
+from database2 import get_proc_asof_date, pg_connection
 from process2 import var_engine
 from process2.db_position_var import insert_results
 from process2.preprocess_var import preprocess_var
+
+
+# ── Beta helpers (used by dashboard upload pipeline) ─────────────────────────
+
+def fetch_betas_bulk(beta_keys: list[str], sec_ids: list[str]) -> dict[str, dict[str, float]]:
+    """Fetch betas from sec_beta for the given keys and security IDs.
+
+    Returns {beta_key: {security_id: beta_value}}.
+    Securities with no row in sec_beta are absent from the inner dict.
+    """
+    if not beta_keys or not sec_ids:
+        return {k: {} for k in beta_keys}
+
+    with pg_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                'SELECT beta_key, security_id, beta FROM sec_beta'
+                ' WHERE beta_key = ANY(%s) AND security_id = ANY(%s)',
+                (beta_keys, sec_ids),
+            )
+            rows = cur.fetchall()
+
+    result: dict[str, dict[str, float]] = {k: {} for k in beta_keys}
+    for beta_key, security_id, beta in rows:
+        if beta is not None:
+            result[beta_key][security_id] = float(beta)
+    return result
+
+
+def add_beta_to_result(result: pd.DataFrame, betas: dict[str, float],
+                       logger: logging.Logger) -> pd.DataFrame:
+    """Map {security_id: beta} onto result['SecurityID'] and store in result['beta'].
+
+    Positions with no matching beta get NaN.
+    """
+    result = result.copy()
+    result['beta'] = result['SecurityID'].map(betas)
+    matched = result['beta'].notna().sum()
+    logger.info(f'Beta: matched {matched}/{len(result)} positions')
+    return result
 
 
 # ── logging setup ─────────────────────────────────────────────────────────────
@@ -152,9 +192,38 @@ def calculate_var(feed_source: str | None = None, as_of_date=None, account_id: i
     logger.info("=== Done ===")
 
 
+def test():
+    from pathlib import Path
+
+    output_dir = Path(__file__).resolve().parent / 'test_output'
+    output_dir.mkdir(exist_ok=True)
+
+    as_of_date = get_proc_asof_date()
+    print(f'as_of_date: {as_of_date}')
+
+    positions = pd.DataFrame({
+        'pos_id':      [1, 2, 3],
+        'SecurityID':  ['T10001757','T10001739','T10001618'],
+        'MarketValue': [100_000.0, 100_000.0, 100_000.0],
+    })
+    print(f'Test positions:\n{positions}\n')
+
+    sens = var_engine.calc_sensitivity_metrics(positions, as_of_date)
+    var_metrics = var_engine.calc_var(positions, sensitivity_metrics=sens)
+
+    sens_path = output_dir / 'sensitivities.csv'
+    var_path  = output_dir / 'var_metrics.csv'
+    sens.to_csv(sens_path)
+    var_metrics.to_csv(var_path)
+    print(f'Saved: {sens_path}')
+    print(f'Saved: {var_path}')
+
+
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser(description='Calculate VaR and store results in position_var.')
+    parser.add_argument('--test', action='store_true',
+                        help='Run test() with synthetic positions and save results to test_output/')
     parser.add_argument('--feed-source', default=None, metavar='FEED_SOURCE',
                         help='Feed source to process (e.g. mssb); default: all feed sources')
     parser.add_argument('--date', metavar='YYYY-MM-DD',
@@ -163,4 +232,7 @@ if __name__ == '__main__':
                         help='Process a single account_id; default: all accounts')
     args = parser.parse_args()
 
-    calculate_var(args.feed_source, args.date, args.account_id)
+    if args.test:
+        test()
+    else:
+        calculate_var(args.feed_source, args.date, args.account_id)

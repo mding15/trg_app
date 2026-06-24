@@ -23,7 +23,7 @@ from api import email2 as email2_util
 from api import db, bcrypt
 from database.models import User, Client
 from database.model_aux import add_client, add_client_report_url
-from api import account_mgmt
+from account import account_mgmt
 
 from api.logging_config import get_logger
 logger = get_logger(__name__)

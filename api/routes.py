@@ -59,7 +59,7 @@ from api import create_account, schedule_demo_handler, request_demo_handler, sso
 from api import portfolios
 from api.auth import token_required, ops_role_required, authenticate, create_impersonation_token
 from api import upload_handler
-from api import account_mgmt
+from account import account_mgmt
 
 from dashboard.portfolios_page import (
     list_portfolios,
@@ -937,6 +937,26 @@ def get_risk_summary(username):
             "target": g["sharpe_vol_target"] if g else 0.25,
             "band":   g["sharpe_vol_band"]   if g else 0.05,
             "max":    g["sharpe_vol_max"]    if g else 0.85,
+        },
+        "gaugeSharpeES": {
+            "value":  g["sharpe_es_value"]  if g else 0.15,
+            "target": g["sharpe_es_target"] if g else 0.12,
+            "band":   g["sharpe_es_band"]   if g else 0.024,
+            "max":    g["sharpe_es_max"]    if g else 0.138,
+        },
+        "gaugeES": {
+            "value":        g["es_value"]         if g else 24_100_000,
+            "limit":        g["es_limit"]         if g else 32_500_000,
+            "band":         g["es_band"]          if g else 1_625_000,
+            "readingValue": g["es_reading_value"] if g else "24.1",
+            "readingUnit":  g["es_reading_unit"]  if g else "M",
+            "targetLabel":  g["es_target_label"]  if g else "32.5M",
+        },
+        "gaugeBeta": {
+            "value": g["beta_value"] if g else 1.2,
+            "bmk":   g["beta_bmk"]  if g else 1.0,
+            "band":  g["beta_band"] if g else 0.10,
+            "max":   g["beta_max"]  if g else 2.0,
         },
     }
     return jsonify(response)

@@ -10,6 +10,9 @@ import time
 import datetime
 import uuid
 import concurrent.futures
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from trg_config import config
 from detl import YH_API
@@ -163,34 +166,36 @@ def insert_stock_dividend(df):
     db_utils.insert_df('yh_stock_dividend', df, key_column='dividend_Ex_Date')
     
     
+def _market_closed():
+    """Return True if it is at or after 6:00 PM US/Eastern time."""
+    from zoneinfo import ZoneInfo
+    ny_now = datetime.datetime.now(tz=ZoneInfo('America/New_York'))
+    return ny_now.hour >= 18
+
+
 def insert_stock_price(df):
 
     tickers = df['ticker'].unique()
     ticker_list = ','.join([f"'{s}'" for s in tickers])
-    
+
     query = f"""
     select ticker, max(date) as max_date from yh_stock_price where ticker in ({ticker_list}) group by ticker
-    """        
-    max_dates_df = db_utils.get_sql_df(query) 
-    
+    """
+    max_dates_df = db_utils.get_sql_df(query)
+
     # convert to date type
     max_dates_df['max_date'] = pd.to_datetime(max_dates_df['max_date'])
     df['date'] = pd.to_datetime(df['date'])
 
-    # delete rows that have dates <= max_date    
+    # exclude today's prices if run before market close (6:00 PM ET)
+    if not _market_closed():
+        today = pd.Timestamp(datetime.date.today())
+        df = df[df['date'] < today]
+
+    # delete rows that have dates <= max_date
     df_filter = df.merge(max_dates_df, on='ticker', how='left')
     df_filter = df_filter[df_filter['max_date'].isna() | (df_filter['date']>df_filter['max_date']) ]
-    df_filter = df_filter.drop(columns=['max_date'])    
-    
-    # delete rows from stock_price if exist for the same ticker and date range (min, max)
-    # result = df.groupby('ticker')['date'].agg(['min', 'max'])
-    # for ticker, row in result.iterrows():
-    #     # min_date = row['min'].strftime('%Y-%m-%d')
-    #     # max_date = row['max'].strftime('%Y-%m-%d')
-    #     min_date = row['min']
-    #     max_date = row['max']
-    #     # print(f'delete {ticker}, {min_date}, {max_date}')
-    #     delete_stock_price(ticker, min_date, max_date)
+    df_filter = df_filter.drop(columns=['max_date'])
 
     # insert df into table stock_price
     db_utils.insert_bulk_df('yh_stock_price', df_filter)
@@ -246,25 +251,42 @@ def _get_proc_asof_date():
             return val.date() if hasattr(val, 'date') else val
 
 
+def _delete_current_price(date, security_ids=None):
+    """Delete current_price rows for a date. Pass security_ids to scope to specific securities."""
+    with pg_connection() as conn:
+        with conn.cursor() as cur:
+            if security_ids is not None:
+                cur.execute(
+                    'DELETE FROM current_price WHERE "Date" = %s AND "SecurityID" = ANY(%s)',
+                    (date, security_ids),
+                )
+            else:
+                cur.execute('DELETE FROM current_price WHERE "Date" = %s', (date,))
+            conn.commit()
+            print(f"deleted {cur.rowcount} row(s) from current_price")
+
+
 # extract End of Day Price and save db
 def extract_eod(tickers=None, asof_date=None):
 
     # use supplied date or fall back to proc_asof_date table
     today = asof_date if asof_date is not None else _get_proc_asof_date()
 
+    partial_run = tickers is not None
+
     # get tickers from table <current_security>
     df = get_eod_tickers(tickers)
     tickers = df['Ticker'].to_list()
     id_map = df.set_index('Ticker')['SecurityID'].to_dict()
 
-    # call API    
+    # call API
     prices = api_eod_price(tickers, today)
-    
+
     # add SecurityID
     prices['SecurityID'] = prices['Ticker'].apply(lambda x: id_map[x])
 
     # delete rows in the table in case of re-run
-    db_utils.delete('current_price', "Date", [today])
+    _delete_current_price(today, list(id_map.values()) if partial_run else None)
     
     # insert prices to db
     db_utils.insert_bulk_df('current_price', prices)
@@ -272,9 +294,13 @@ def extract_eod(tickers=None, asof_date=None):
     print(f'Successfully extracted prices for {len(prices)} tickers')
     
 
-def test_extract_eod():
-    extract_eod(['SPY', 'QQQ'])
+def test_eod():
+    import datetime
+    tickers = ['AAPL', 'SPY']
+    asof_date = datetime.date(2026, 6, 15)
+    extract_eod(tickers=None, asof_date=asof_date)
     
+
 #
 # call this function when add new tickers into the current_security table
 # 1) find the new tickers in the current_security
@@ -337,13 +363,16 @@ def get_downloaded_tickers(today=None):
         folder = get_hist_folder()
         
     files = folder.glob('*.csv')
-    tickers=[]
+    tickers = []
     for file in files:
-        # print(file.name)
-        df = pd.read_csv(file)
-        tickers.extend(df['ticker'].unique())
+        try:
+            df = pd.read_csv(file)
+            if 'ticker' in df.columns:
+                tickers.extend(df['ticker'].unique())
+        except Exception as e:
+            print(f"Warning: skipping unreadable file {file.name}: {e}")
 
-    return tickers    
+    return tickers
     
 ########################################################################################
 # augment API functions
@@ -549,4 +578,8 @@ def test(wb):
     df = YH_API.GET_QUOTES(tickers)
 
     tickers = ['DAY', 'KVUE', 'KKR', 'VST', 'JBL', 'GEV', 'COR', 'SMCI', 'DECK', 'SOLV', 'BLDR', 'CPAY', 'HUBB', 'NWSA', 'SW', 'CRWD', 'GDDY']
-    xl_utils.add_df_to_excel(df, wb, 'df')    
+    xl_utils.add_df_to_excel(df, wb, 'df')
+
+
+if __name__ == '__main__':
+    test_eod()

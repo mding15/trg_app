@@ -172,7 +172,9 @@ CREATE TABLE public.port_positions (
 	unknown_security bool DEFAULT false NOT NULL,
 	asset_class varchar(50) NULL,
 	asset_type varchar(50) NULL,
-	total_cost numeric NULL
+	total_cost numeric NULL,
+	broker_name text NULL,
+	broker_account text NULL
 );
 CREATE INDEX idx_port_positions_port_id ON public.port_positions USING btree (port_id);
 

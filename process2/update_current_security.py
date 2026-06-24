@@ -3,7 +3,7 @@ update_current_security.py — Add missing securities to current_security.
 
 Finds security_ids present in proc_positions (latest as_of_date per account)
 that are not in current_security, fetches their attributes from
-security_info_view, and inserts them.
+security_info, and inserts them.
 
 Usage:
     python maintenance/update_current_security.py
@@ -39,17 +39,16 @@ ORDER BY p.security_id
 """
 
 _SQL_SEC_INFO = """
-SELECT "SecurityID", "SecurityName", "Currency", "AssetClass", "AssetType",
-       "ISIN", "CUSIP", "BB_UNIQUE", "BB_GLOBAL", "Ticker"
-FROM security_info_view
+SELECT "SecurityID", "SecurityName", "Currency", "AssetClass", "AssetType"
+FROM security_info
 WHERE "SecurityID" = ANY(%s)
 """
 
 _SQL_INSERT = """
 INSERT INTO current_security
-    ("SecurityID", "SecurityName", "ISIN", "CUSIP", "BB_UNIQUE", "BB_GLOBAL", "Ticker", "insert_time")
+    ("SecurityID", "SecurityName", "insert_time")
 VALUES
-    (%(SecurityID)s, %(SecurityName)s, %(ISIN)s, %(CUSIP)s, %(BB_UNIQUE)s, %(BB_GLOBAL)s, %(Ticker)s, NOW())
+    (%(SecurityID)s, %(SecurityName)s, NOW())
 ON CONFLICT ("SecurityID") DO NOTHING
 """
 
@@ -98,7 +97,7 @@ def run(dry_run: bool = False) -> None:
 
     not_found = [sid for sid in missing_ids if sid not in found_ids]
     if not_found:
-        log.warning(f'{len(not_found)} security_id(s) not found in security_info_view (will be skipped):')
+        log.warning(f'{len(not_found)} security_id(s) not found in security_info (will be skipped):')
         for sid in not_found:
             log.warning(f'  {sid}')
 

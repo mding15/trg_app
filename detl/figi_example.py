@@ -94,7 +94,8 @@ def main():
     mapping_request = [
         #{"idType":"ID_BB_GLOBAL","idValue":"BBG000BLNNH6","exchCode":"US"},
         #{"idType":"ID_CUSIP","idValue":"67066G104","exchCode":"US"},
-        {"idType":"ID_ISIN","idValue":"CL0002486752"},
+        #{"idType":"ID_ISIN","idValue":"CL0002486752"},
+        {"idType":"TICKER","idValue":"SBGSY"},
     ]
     print("Making a mapping request:", mapping_request)
     mapping_response = api_call("/v3/mapping", mapping_request)

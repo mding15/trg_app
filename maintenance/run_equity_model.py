@@ -1,19 +1,21 @@
 """
-run_equity_model.py — Equity model maintenance tasks.
+run_equity_model.py — Run the equity model pipeline.
 
-Task 1 (write-prices): Read historical adjusted-close prices from a CSV file and
-write them into the 'Prices' tab of Excel/EquityModel.xlsx. The CSV uses Ticker as
-the security identifier; the mapping to SecurityID is derived from the 'Securities'
-tab of the workbook.  The Prices tab is fully replaced on each run.
+Reads the Securities tab from Excel/EquityModel.xlsx, fetches historical prices
+from the HDF market data store via utils.mkt_data.get_market_data(), and calls
+models.equity_model.run_model().
 
-Task 2 (run-model): Read Securities and Prices tabs from EquityModel.xlsx and call
-models.equity_model.run_model() to run the full equity model pipeline.
+Date range is taken from the model Parameters.csv (TS Start Date / TS End Date).
+If model_id is not supplied, the default is read from utils.var_utils.get_default_model_id().
+
+For securities with no price data in the HDF store, mkt_data_extract.extract_yh_price()
+is called to fetch from YH. Securities that still have no data after the fetch are
+skipped and logged.
 
 Usage:
-    python run_equity_model.py write-prices --file CSV/hist_price_20260513_165602.csv
-    python run_equity_model.py run-model
-    python run_equity_model.py run-model --model-id M_20251231
-    python run_equity_model.py run-model --model-id M_20251231 --submodel-id Equity.5
+    python run_equity_model.py
+    python run_equity_model.py --model-id M_20251231
+    python run_equity_model.py --model-id M_20251231 --submodel-id Equity.5
 """
 from __future__ import annotations
 
@@ -23,6 +25,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import openpyxl
 
@@ -69,125 +72,60 @@ def _read_securities(wb: openpyxl.Workbook) -> list[dict]:
     return rows
 
 
-# ── task: write-prices ─────────────────────────────────────────────────────────
-
-def write_prices(csv_path: Path, logger: logging.Logger) -> None:
-    """
-    Read adjclose prices from csv_path and replace the Prices tab in EquityModel.xlsx.
-
-    Columns in the Prices tab: Date, then one column per SecurityID in Securities tab order.
-    Rows: one per distinct date in the CSV, sorted ascending.
-    """
-    logger.info(f"=== write-prices started: csv='{csv_path}' workbook='{WORKBOOK_PATH}' ===")
-
-    # ── Read workbook ──────────────────────────────────────────────────────────
-    if not WORKBOOK_PATH.exists():
-        raise FileNotFoundError(f"Workbook not found: {WORKBOOK_PATH}")
-    wb = openpyxl.load_workbook(WORKBOOK_PATH)
-
-    if 'Securities' not in wb.sheetnames:
-        raise ValueError("'Securities' tab not found in workbook")
-    securities = _read_securities(wb)
-    ticker_to_sec_id = {s['Ticker']: s['SecurityID'] for s in securities if s.get('Ticker')}
-    sec_ids = [s['SecurityID'] for s in securities]  # ordered
-    logger.info(f"Read {len(securities)} securities from 'Securities' tab")
-
-    # ── Read CSV ───────────────────────────────────────────────────────────────
-    if not csv_path.exists():
-        raise FileNotFoundError(f"CSV file not found: {csv_path}")
-    df = pd.read_csv(csv_path, usecols=['date', 'adjclose', 'ticker'], parse_dates=['date'])
-    logger.info(f"Read {len(df)} rows from CSV  ({df['ticker'].nunique()} tickers, "
-                f"date range {df['date'].min().date()} → {df['date'].max().date()})")
-
-    # Warn about any tickers in CSV not found in Securities tab
-    csv_tickers = set(df['ticker'].unique())
-    unmapped = csv_tickers - set(ticker_to_sec_id)
-    if unmapped:
-        logger.warning(f"Tickers in CSV with no Securities mapping (will be skipped): {sorted(unmapped)}")
-
-    # ── Pivot: rows=date, cols=SecurityID ─────────────────────────────────────
-    df['security_id'] = df['ticker'].map(ticker_to_sec_id)
-    df = df.dropna(subset=['security_id'])
-    prices = (
-        df.pivot(index='date', columns='security_id', values='adjclose')
-          .sort_index()
-          .reindex(columns=sec_ids)   # enforce Securities tab column order
-    )
-    logger.info(f"Pivoted price matrix: {len(prices)} dates × {len(prices.columns)} securities")
-
-    # ── Replace Prices tab ─────────────────────────────────────────────────────
-    if 'Prices' in wb.sheetnames:
-        del wb['Prices']
-    ws = wb.create_sheet('Prices')
-
-    # Header row
-    ws.cell(1, 1, 'Date')
-    for col_idx, sec_id in enumerate(sec_ids, start=2):
-        ws.cell(1, col_idx, sec_id)
-
-    # Data rows
-    for row_idx, (date, row) in enumerate(prices.iterrows(), start=2):
-        ws.cell(row_idx, 1, date.date())
-        for col_idx, sec_id in enumerate(sec_ids, start=2):
-            val = row.get(sec_id)
-            if pd.notna(val):
-                ws.cell(row_idx, col_idx, float(val))
-
-    wb.save(WORKBOOK_PATH)
-
-    logger.info(f"Wrote {len(prices)} rows × {len(sec_ids)} security columns to 'Prices' tab")
-    logger.info(f"Saved: '{WORKBOOK_PATH}'")
-    logger.info("=== write-prices done ===")
-
-
 # ── task: run-model ────────────────────────────────────────────────────────────
 
 def run_equity_model(model_id: str | None, submodel_id: str | None, logger: logging.Logger) -> None:
-    """
-    Read Securities and Prices tabs from EquityModel.xlsx and call
-    equity_model.run_model() to run the full equity model pipeline.
+    from models import equity_model, model_utils
+    from utils import mkt_data, var_utils
+    from mkt_data import mkt_data_extract
 
-    securities: DataFrame built from the Securities tab
-                (columns: SecurityID, SecurityName, Currency, AssetClass, AssetType, Ticker)
-    hist_prices: DataFrame from the Prices tab
-                 (DatetimeIndex named 'Date', SecurityID columns, float values)
-    """
-    from models import equity_model
+    # ── Resolve model_id and date range ───────────────────────────────────────
+    if model_id is None:
+        model_id = var_utils.get_default_model_id()
+    model_params = model_utils.read_Model_Parameters(model_id)
+    from_date = pd.to_datetime(model_params['TS Start Date'])
+    to_date   = pd.to_datetime(model_params['TS End Date'])
 
     logger.info(
         f"=== run-model started: workbook='{WORKBOOK_PATH}' "
-        f"model_id={model_id or '(default)'} submodel_id={submodel_id or '(auto)'} ==="
+        f"model_id={model_id} submodel_id={submodel_id or '(auto)'} "
+        f"date_range={from_date.date()} → {to_date.date()} ==="
     )
 
-    # ── Read workbook ──────────────────────────────────────────────────────────
+    # ── Read Securities tab ────────────────────────────────────────────────────
     if not WORKBOOK_PATH.exists():
         raise FileNotFoundError(f"Workbook not found: {WORKBOOK_PATH}")
     wb = openpyxl.load_workbook(WORKBOOK_PATH, data_only=True)
+    if 'Securities' not in wb.sheetnames:
+        raise ValueError("'Securities' tab not found in workbook")
 
-    for required in ('Securities', 'Prices'):
-        if required not in wb.sheetnames:
-            raise ValueError(f"'{required}' tab not found in workbook")
-
-    # ── Build securities DataFrame ─────────────────────────────────────────────
-    sec_rows = _read_securities(wb)
+    sec_rows   = _read_securities(wb)
     securities = pd.DataFrame(sec_rows)
+    sec_ids    = securities['SecurityID'].tolist()
     logger.info(f"Read {len(securities)} securities from 'Securities' tab")
 
-    # ── Build hist_prices DataFrame ────────────────────────────────────────────
-    ws = wb['Prices']
-    headers = [ws.cell(1, c).value for c in range(1, ws.max_column + 1)]  # ['Date', 'T1...', ...]
-    price_rows = []
-    for r in range(2, ws.max_row + 1):
-        row = [ws.cell(r, c).value for c in range(1, ws.max_column + 1)]
-        if row[0] is not None:
-            price_rows.append(row)
+    # ── Fetch prices from HDF ──────────────────────────────────────────────────
+    hist_prices = mkt_data.get_market_data(sec_ids, from_date=from_date, to_date=to_date)
 
-    hist_prices = pd.DataFrame(price_rows, columns=headers)
-    hist_prices['Date'] = pd.to_datetime(hist_prices['Date'])
-    hist_prices = hist_prices.set_index('Date')
-    hist_prices = hist_prices.astype(float)
+    present     = set(hist_prices.columns) if not hist_prices.empty else set()
+    missing_ids = [s for s in sec_ids if s not in present or hist_prices[s].isna().all()]
+
+    if missing_ids:
+        logger.warning(f"{len(missing_ids)} security_id(s) with no price data — fetching from YH: {missing_ids}")
+        mkt_data_extract.extract_yh_price(security_ids=missing_ids)
+        hist_prices = mkt_data.get_market_data(sec_ids, from_date=from_date, to_date=to_date)
+
+        still_missing = [s for s in missing_ids if s not in hist_prices.columns or hist_prices[s].isna().all()]
+        if still_missing:
+            logger.warning(f"{len(still_missing)} security_id(s) still have no data after fetch — skipping: {still_missing}")
+            securities  = securities[~securities['SecurityID'].isin(still_missing)]
+            hist_prices = hist_prices[[c for c in hist_prices.columns if c not in still_missing]]
+
+    # zero prices produce -inf log returns — treat as missing
+    hist_prices = hist_prices.replace(0, np.nan)
+
     logger.info(
-        f"Read Prices tab: {len(hist_prices)} dates × {len(hist_prices.columns)} securities "
+        f"Price matrix: {len(hist_prices)} dates × {len(hist_prices.columns)} securities "
         f"({hist_prices.index.min().date()} → {hist_prices.index.max().date()})"
     )
 
@@ -206,25 +144,12 @@ def run_equity_model(model_id: str | None, submodel_id: str | None, logger: logg
 # ── CLI ────────────────────────────────────────────────────────────────────────
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='Equity model maintenance tasks')
-    sub = parser.add_subparsers(dest='task', required=True)
-
-    p_prices = sub.add_parser('write-prices', help='Write adjusted-close prices into the Prices tab')
-    p_prices.add_argument('--file', required=True, metavar='PATH',
-                          help='Path to hist_price CSV (e.g. CSV/hist_price_20260513_165602.csv)')
-
-    p_model = sub.add_parser('run-model', help='Run the equity model pipeline')
-    p_model.add_argument('--model-id', default=None, metavar='MODEL_ID',
-                         help='Model ID (default: from var_utils.get_default_model_id())')
-    p_model.add_argument('--submodel-id', default=None, metavar='SUBMODEL_ID',
-                         help='Submodel ID (default: auto-generated as Equity.<timestamp>)')
-
+    parser = argparse.ArgumentParser(description='Run the equity model pipeline.')
+    parser.add_argument('--model-id', default=None, metavar='MODEL_ID',
+                        help='Model ID (default: from var_utils.get_default_model_id())')
+    parser.add_argument('--submodel-id', default=None, metavar='SUBMODEL_ID',
+                        help='Submodel ID (default: auto-generated as Equity.<timestamp>)')
     args = parser.parse_args()
 
-    if args.task == 'write-prices':
-        _logger = _setup_logger('write_prices')
-        write_prices(Path(args.file), _logger)
-
-    elif args.task == 'run-model':
-        _logger = _setup_logger('run_model')
-        run_equity_model(args.model_id, args.submodel_id, _logger)
+    _logger = _setup_logger('run_model')
+    run_equity_model(args.model_id, args.submodel_id, _logger)

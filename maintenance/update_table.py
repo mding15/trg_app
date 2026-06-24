@@ -46,9 +46,11 @@ TABLE_KEYS: dict[str, list[str]] = {
     'security_info':      ['SecurityID'],
     'current_security':   ['SecurityID'],
     'mkt_data_source':    ['SecurityID'],
+    'bond_info':          ['SecurityID'],
+    'security_xref':      ['SecurityID', 'REF_TYPE'],
     'security_attribute': ['security_id'],
     'bond_price':         ['security_id', 'price_date'],
-    'security_xref':      ['SecurityID', 'REF_TYPE'],
+    
 }
 
 

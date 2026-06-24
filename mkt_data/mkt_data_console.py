@@ -89,13 +89,9 @@ def mkt_data_stat(wb=None):
     stat = mkt_data_info.calc_stat(prices)
     xl_utils.add_df_to_excel(stat, wb, 'stat4', index=False)    
 
-# extract data from YH and insert into yh_stock_price table
+# pull historical prices from YH, save to db and hdf, update mkt_data_info table
 def extract_yh_hist():
     
-    # extract data from YH and insert into yh_stock_price table
-    yh_extract.update_hist_price()
-
-    # copy price data from db to hdf
     mkt_data_extract.extract_yh_price()
     
 ###############################################################################    

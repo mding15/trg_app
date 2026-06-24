@@ -15,7 +15,7 @@ def update_position_price(positions, as_of_date):
     positions['Quantity'] = pd.to_numeric(positions['Quantity'], errors='coerce')
     positions['LastPrice'] = pd.to_numeric(positions['LastPrice'], errors='coerce')
     positions['MarketValue'] = pd.to_numeric(positions['MarketValue'], errors='coerce')
-    sec_ids = positions['SecurityID'].unique().tolist()
+    sec_ids = positions['SecurityID'].dropna().unique().tolist()
     prices = mkt_timeseries.get_last_prices(sec_ids, as_of_date)
 
     # update position price from market DB

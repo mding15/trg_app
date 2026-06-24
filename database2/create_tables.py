@@ -78,11 +78,13 @@ def create_tables() -> None:
                     volatility       FLOAT,
                     sharpe_vol       FLOAT,
                     sharpe_var       FLOAT,
+                    sharpe_es        FLOAT,
                     beta             FLOAT,
                     max_drawdown      FLOAT,
                     top_five_conc     FLOAT,
                     three_year_return FLOAT,
                     si_return         FLOAT,
+                    expected_return   NUMERIC,
                     updated_at      TIMESTAMP NOT NULL DEFAULT NOW(),
                     UNIQUE (account_id, as_of_date)
                 )

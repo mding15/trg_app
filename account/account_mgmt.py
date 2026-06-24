@@ -5,13 +5,15 @@ account_mgmt.py — DB helpers for the Account Management ops page.
 All queries target the database2 Postgres instance (pg_connection).
 """
 from database2 import pg_connection
+from account.account_limit import initial_limit_value
+from account.account_parameters import initial_parameters
 
 
 def get_clients():
     """Return all clients ordered by name."""
     with pg_connection() as conn:
         with conn.cursor() as cur:
-            cur.execute('SELECT client_id, client_name FROM client ORDER BY client_name')
+            cur.execute('SELECT client_id, client_name FROM client WHERE is_active = TRUE ORDER BY client_name')
             return [{'client_id': r[0], 'client_name': r[1]} for r in cur.fetchall()]
 
 
@@ -83,6 +85,7 @@ def get_client_users(client_id):
                 SELECT user_id, username, email, firstname, lastname, role
                 FROM "user"
                 WHERE client_id = %s OR role IN ('admin', 'superadmin', 'support')
+                and approval = 1
                 ORDER BY username
                 """,
                 (client_id,),
@@ -141,4 +144,6 @@ def create_account(account_name, short_name, owner_id, client_id, parent_account
             )
             new_id = cur.fetchone()[0]
         conn.commit()
+    initial_limit_value(new_id)
+    initial_parameters(new_id)
     return new_id

@@ -68,7 +68,7 @@ def write_portfolio_summary(account_id: int, summary: dict) -> None:
                    mtdReturn, ytdReturn, oneYearReturn
     Optional keys (risk metrics, default None):
         unrealizedGain, var1d95, var1d99, var10d99, es1d95, es99,
-        volatility, sharpeVol, sharpeVar, beta, maxDrawdown, topFiveConc
+        volatility, sharpeVol, sharpeVar, sharpeES, beta, maxDrawdown, topFiveConc
     """
     sql = """
         INSERT INTO db_portfolio_summary
@@ -76,12 +76,12 @@ def write_portfolio_summary(account_id: int, summary: dict) -> None:
              day_return, mtd_return, ytd_return, one_year_return,
              unrealized_gain, var_1d_95, var_1d_99, var_10d_99,
              es_1d_95, es_1d_99,
-             volatility, sharpe_vol, sharpe_var, beta, max_drawdown, top_five_conc,
-             three_year_return, si_return, updated_at)
+             volatility, sharpe_vol, sharpe_var, sharpe_es, beta, max_drawdown, top_five_conc,
+             three_year_return, si_return, expected_return, updated_at)
         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s,
                 %s, %s, %s, %s, %s, %s,
-                %s, %s, %s, %s, %s, %s,
-                %s, %s, NOW())
+                %s, %s, %s, %s, %s, %s, %s,
+                %s, %s, %s, NOW())
         ON CONFLICT (account_id, as_of_date) DO UPDATE SET
             aum               = EXCLUDED.aum,
             num_positions     = EXCLUDED.num_positions,
@@ -99,11 +99,13 @@ def write_portfolio_summary(account_id: int, summary: dict) -> None:
             volatility        = EXCLUDED.volatility,
             sharpe_vol        = EXCLUDED.sharpe_vol,
             sharpe_var        = EXCLUDED.sharpe_var,
+            sharpe_es         = EXCLUDED.sharpe_es,
             beta              = EXCLUDED.beta,
             max_drawdown      = EXCLUDED.max_drawdown,
             top_five_conc     = EXCLUDED.top_five_conc,
             three_year_return = EXCLUDED.three_year_return,
             si_return         = EXCLUDED.si_return,
+            expected_return   = EXCLUDED.expected_return,
             updated_at        = NOW()
     """
     with pg_connection() as conn:
@@ -127,11 +129,13 @@ def write_portfolio_summary(account_id: int, summary: dict) -> None:
                 summary.get("volatility"),
                 summary.get("sharpeVol"),
                 summary.get("sharpeVar"),
+                summary.get("sharpeES"),
                 summary.get("beta"),
                 summary.get("maxDrawdown"),
                 summary.get("topFiveConc"),
                 summary.get("threeYearReturn"),
                 summary.get("siReturn"),
+                summary.get("expectedReturn"),
             ))
         conn.commit()
 
@@ -286,7 +290,7 @@ def read_portfolio_summary(account_id: int) -> dict:
                mtd_return, ytd_return, one_year_return,
                unrealized_gain, var_1d_95, var_1d_99, var_10d_99,
                es_1d_95, es_1d_99,
-               volatility, sharpe_vol, sharpe_var, beta, max_drawdown, top_five_conc,
+               volatility, sharpe_vol, sharpe_var, sharpe_es, beta, max_drawdown, top_five_conc,
                three_year_return, si_return
         FROM db_portfolio_summary
         WHERE account_id = %s
@@ -340,11 +344,12 @@ def read_portfolio_summary(account_id: int) -> dict:
         "volatility":     row[14],
         "sharpeVol":      row[15],
         "sharpeVar":      row[16],
-        "beta":           row[17],
-        "maxDrawdown":      row[18],
-        "topFiveConc":      row[19],
-        "threeYearReturn":  row[20],
-        "siReturn":         row[21],
+        "sharpeES":       row[17],
+        "beta":           row[18],
+        "maxDrawdown":      row[19],
+        "topFiveConc":      row[20],
+        "threeYearReturn":  row[21],
+        "siReturn":         row[22],
     }
 
     # Resolve configured strip-tile metric from account_parameters
@@ -585,9 +590,11 @@ def read_risk_parameters(account_id: int) -> list[dict]:
         LIMIT 1
     """
     ps_sql = """
-        SELECT MAX(as_of_date)
+        SELECT as_of_date, aum
         FROM db_portfolio_summary
         WHERE account_id = %s
+        ORDER BY as_of_date DESC
+        LIMIT 1
     """
     with pg_connection() as conn:
         with conn.cursor() as cur:
@@ -601,10 +608,20 @@ def read_risk_parameters(account_id: int) -> list[dict]:
             return None
         return d.strftime("%Y-%m-%d") if hasattr(d, "strftime") else str(d)[:10]
 
+    def _fmt_aum(v):
+        if v is None:
+            return None
+        if v >= 1_000_000:
+            return f"${v / 1_000_000:.1f}M"
+        if v >= 1_000:
+            return f"${v / 1_000:.1f}K"
+        return f"${v:.0f}"
+
     def _val(v):
         return v if v is not None else "—"
 
     as_of_date    = _fmt_date(ps[0]) if ps else None
+    aum           = _fmt_aum(ps[1]) if ps else None
     risk_horizon  = ap[0] if ap else None
     risk_measure  = ap[1] if ap else None
     base_currency = ap[2] if ap else None
@@ -612,12 +629,13 @@ def read_risk_parameters(account_id: int) -> list[dict]:
     exp_return    = ap[4] if ap else None
 
     return [
+        {"label": "Size",          "value": _val(aum),           "badge": False},
         {"label": "As of Date",    "value": _val(as_of_date),    "badge": False},
         {"label": "Risk Horizon",  "value": _val(risk_horizon),  "badge": True},
         {"label": "Risk Measure",  "value": _val(risk_measure),  "badge": True},
         {"label": "Base Currency", "value": _val(base_currency), "badge": True},
         {"label": "Benchmark",     "value": _val(benchmark),     "badge": True},
-        {"label": "Exp. Return",   "value": _val(exp_return),    "badge": True},
+        {"label": "Exp. Returns",  "value": _val(exp_return),    "badge": True},
     ]
 
 

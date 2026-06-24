@@ -25,6 +25,7 @@ Usage:
 """
 from __future__ import annotations
 
+import csv
 import logging
 import os
 import sys
@@ -39,13 +40,13 @@ FEED_SOURCE = 'file_upload'
 
 # ── logging setup ──────────────────────────────────────────────────────────────
 
-def _setup_logger(as_of_date, account_id=None) -> logging.Logger:
+def _setup_logger(as_of_date, account_id, run_ts: str) -> logging.Logger:
     log_dir = os.path.join(os.path.dirname(__file__), '..', '..', 'log')
     os.makedirs(log_dir, exist_ok=True)
     account_suffix = f'_account{account_id}' if account_id is not None else ''
     log_file = os.path.join(
         log_dir,
-        f'tracked_proc_positions_{as_of_date}{account_suffix}_{datetime.now().strftime("%Y%m%d_%H%M%S")}.log',
+        f'tracked_proc_positions_{as_of_date}{account_suffix}_{run_ts}.log',
     )
     logger = logging.getLogger(f'tracked_proc_positions_{as_of_date}{account_suffix}')
     logger.setLevel(logging.DEBUG)
@@ -77,6 +78,7 @@ def _load_tracked_portfolios(cur, account_id=None) -> list[dict]:
             SELECT port_id, account_id, port_name, upload_dt
             FROM portfolio_info
             WHERE port_type = 'tracked' AND filename != 'auto feed' AND account_id = %s
+              AND account_id NOT IN (SELECT parent_account_id FROM account WHERE parent_account_id IS NOT NULL)
             """,
             (account_id,),
         )
@@ -86,6 +88,7 @@ def _load_tracked_portfolios(cur, account_id=None) -> list[dict]:
             SELECT port_id, account_id, port_name, upload_dt
             FROM portfolio_info
             WHERE port_type = 'tracked' AND filename != 'auto feed'
+              AND account_id NOT IN (SELECT parent_account_id FROM account WHERE parent_account_id IS NOT NULL)
             """
         )
     rows = [
@@ -108,7 +111,7 @@ def _load_positions(cur, port_ids: list[int]) -> list[dict]:
         """
         SELECT port_id, "ID", "SecurityID", "SecurityName", "ISIN", "CUSIP",
                "Ticker", "Quantity", "MarketValue", "userAssetClass", "userCurrency",
-               total_cost
+               total_cost, broker_name, broker_account
         FROM port_positions
         WHERE port_id = ANY(%s)
         """,
@@ -120,16 +123,18 @@ def _load_positions(cur, port_ids: list[int]) -> list[dict]:
 
 def _load_price_cache(cur, security_ids: list[str], as_of_date) -> dict[str, tuple]:
     """
-    Batch-fetch closing prices from current_price for the given SecurityIDs and date.
+    Batch-fetch closing prices from current_price for the given SecurityIDs.
+    Uses the most recent price on or before as_of_date.
     Returns {SecurityID: (Close, Date)}.
     """
     if not security_ids:
         return {}
     cur.execute(
         """
-        SELECT "SecurityID", "Close", "Date"
+        SELECT DISTINCT ON ("SecurityID") "SecurityID", "Close", "Date"
         FROM current_price
-        WHERE "Date" = %s AND "SecurityID" = ANY(%s)
+        WHERE "Date" <= %s AND "SecurityID" = ANY(%s)
+        ORDER BY "SecurityID", "Date" DESC
         """,
         (as_of_date, security_ids),
     )
@@ -220,10 +225,45 @@ def _archive_and_replace(cur, account_ids: list[int], feed_date, logger: logging
         logger.info(f"Deleted {replaced} existing proc_positions rows for as_of_date={feed_date} (to be replaced)")
 
 
+# ── CSV price report ──────────────────────────────────────────────────────────
+
+def _write_price_csv(log_dir: str, as_of_date, run_ts: str, processed: list[dict],
+                     account_id, logger: logging.Logger) -> None:
+    """Write one row per unique security showing how its price was resolved."""
+    account_suffix = f'_account{account_id}' if account_id is not None else ''
+    csv_path = os.path.join(
+        log_dir,
+        f'tracked_proc_positions_{as_of_date}{account_suffix}_{run_ts}_prices.csv',
+    )
+    seen: dict[str, dict] = {}
+    for r in processed:
+        sid = r['security_id']
+        if sid not in seen:
+            seen[sid] = r
+
+    with open(csv_path, 'w', newline='', encoding='utf-8') as f:
+        writer = csv.DictWriter(
+            f, fieldnames=['security_id', 'security_name', 'price_type', 'price', 'price_date']
+        )
+        writer.writeheader()
+        for r in seen.values():
+            writer.writerow({
+                'security_id':   r['security_id'],
+                'security_name': r['security_name'],
+                'price_type':    r['price_type'],
+                'price':         r['last_price'],
+                'price_date':    r['last_price_date'],
+            })
+
+    logger.info(f"Price CSV written ({len(seen)} unique securities): {csv_path}")
+
+
 # ── main ───────────────────────────────────────────────────────────────────────
 
 def process_tracked_positions(as_of_date, account_id=None, dry_run=False) -> int:
-    logger = _setup_logger(as_of_date, account_id)
+    run_ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    log_dir = os.path.join(os.path.dirname(__file__), '..', '..', 'log')
+    logger = _setup_logger(as_of_date, account_id, run_ts)
     logger.info(
         f"=== Start tracked_proc_positions  as_of_date={as_of_date}"
         + (f"  account_id={account_id}" if account_id is not None else "")
@@ -261,7 +301,7 @@ def process_tracked_positions(as_of_date, account_id=None, dry_run=False) -> int
             price_cache      = _load_price_cache(cur, sec_ids, as_of_date)
             bond_price_cache = _load_bond_price_cache(cur, sec_ids, as_of_date)
             logger.info(
-                f"Loaded {len(price_cache)} price entries from current_price for {as_of_date}"
+                f"Loaded {len(price_cache)} price entries from current_price (latest on or before {as_of_date})"
             )
             logger.info(
                 f"Loaded {len(bond_price_cache)} price entries from bond_price for {as_of_date}"
@@ -286,18 +326,22 @@ def process_tracked_positions(as_of_date, account_id=None, dry_run=False) -> int
             if bond_entry:
                 last_price      = bond_entry[0]
                 last_price_date = bond_entry[1]
+                price_type      = 'bond_price'
                 bond_priced_count += 1
             elif price_entry:
                 last_price      = price_entry[0]
                 last_price_date = price_entry[1]
+                price_type      = 'current_price'
                 priced_count += 1
             elif quantity and orig_mv and float(quantity) != 0:
                 last_price      = float(orig_mv) / float(quantity)
                 last_price_date = None
+                price_type      = 'implied'
                 implied_count += 1
             else:
                 last_price      = None
                 last_price_date = None
+                price_type      = 'no_price'
                 no_price_count += 1
 
             # Recalculate market_value = quantity × last_price
@@ -319,10 +363,11 @@ def process_tracked_positions(as_of_date, account_id=None, dry_run=False) -> int
                 'market_value':    market_value,
                 'asset_class':     r.get('userAssetClass') or None,
                 'currency':        r.get('userCurrency') or '',
-                'broker_account':  '',
-                'broker':          '',
+                'broker_account':  r.get('broker_account') or '',
+                'broker':          r.get('broker_name') or '',
                 'last_price':      last_price,
                 'last_price_date': last_price_date,
+                'price_type':      price_type,
                 'feed_source':     FEED_SOURCE,
                 'total_cost':      r.get('total_cost'),
             })
@@ -331,6 +376,8 @@ def process_tracked_positions(as_of_date, account_id=None, dry_run=False) -> int
         logger.info(f"Priced from current_price : {priced_count}")
         logger.info(f"Implied price (MV / Qty)  : {implied_count}")
         logger.info(f"No price available        : {no_price_count}")
+
+        _write_price_csv(log_dir, as_of_date, run_ts, processed, account_id, logger)
 
         if dry_run:
             logger.info("─" * 60)

@@ -65,7 +65,7 @@ def build_gauge_data(account_id: int) -> dict:
     var_value = gauge_raw if gauge_raw is not None else 16_900_000
 
     limits = read_account_limit_multi(
-        account_id, ["var_limit_dollar", "target_sharpe_var", "target_sharpe_vol"]
+        account_id, ["var_limit_dollar", "target_sharpe_var", "target_sharpe_vol", "es_limit_dollar", "target_sharpe_es"]
     )
     var_limit = limits.get("var_limit_dollar", 25_000_000)
     var_band  = var_limit * 0.05
@@ -84,8 +84,8 @@ def build_gauge_data(account_id: int) -> dict:
 
     sharpe_var_band = sharpe_var_target * 0.20
     sharpe_vol_band = sharpe_vol_target * 0.20
-    sharpe_var_max  = 1.0 if sharpe_var_target < 0.9 else sharpe_var_target * 1.15
-    sharpe_vol_max  = 1.0 if sharpe_vol_target < 0.9 else sharpe_vol_target * 1.15
+    sharpe_var_max  = max(sharpe_var_target, sharpe_var) * 1.15
+    sharpe_vol_max  = max(sharpe_vol_target, sharpe_vol) * 1.15
 
     _vol_bmk_raw = _read_benchmark_volatility(benchmark_id)
     vol_bmk  = (_vol_bmk_raw * 100) if _vol_bmk_raw is not None else 7.5
@@ -93,6 +93,27 @@ def build_gauge_data(account_id: int) -> dict:
     vol_max  = max(vol_bmk, float(vol)) * 1.15
 
     reading_value, reading_unit = _fmt_var(var_value)
+
+    # SR (ES) vs BMK gauge
+    sharpe_es_raw    = ps.get("sharpeES")
+    sharpe_es        = sharpe_es_raw if sharpe_es_raw is not None else 0.15
+    sharpe_es_target = limits.get("target_sharpe_es", 0.12)
+    sharpe_es_band   = sharpe_es_target * 0.20
+    sharpe_es_max    = max(sharpe_es_target, sharpe_es) * 1.15
+
+    # ES 95% vs Limit gauge
+    es_raw   = ps.get("es1d95")
+    es_value = es_raw if es_raw is not None else 24_100_000
+    es_limit = limits.get("es_limit_dollar", var_limit * 1.30)
+    es_band  = es_limit * 0.05
+    es_reading_value, es_reading_unit = _fmt_var(es_value)
+
+    # Beta vs S&P gauge
+    beta_raw   = ps.get("beta")
+    beta_value = float(beta_raw) if beta_raw is not None else 1.2
+    beta_bmk   = 1.0
+    beta_band  = 0.10
+    beta_max   = max(beta_value, beta_bmk) * 1.5
 
     return {
         # VaR vs Limit gauge
@@ -107,6 +128,18 @@ def build_gauge_data(account_id: int) -> dict:
         "sharpe_var_target": sharpe_var_target,
         "sharpe_var_band":   sharpe_var_band,
         "sharpe_var_max":    sharpe_var_max,
+        # SR (ES) vs BMK gauge
+        "sharpe_es_value":   sharpe_es,
+        "sharpe_es_target":  sharpe_es_target,
+        "sharpe_es_band":    sharpe_es_band,
+        "sharpe_es_max":     sharpe_es_max,
+        # ES 95% vs Limit gauge
+        "es_value":          es_value,
+        "es_limit":          es_limit,
+        "es_band":           es_band,
+        "es_reading_value":  es_reading_value,
+        "es_reading_unit":   es_reading_unit,
+        "es_target_label":   _target_label(es_limit),
         # Vol vs BMK gauge
         "vol_value":         float(vol),
         "vol_bmk":           vol_bmk,
@@ -117,4 +150,9 @@ def build_gauge_data(account_id: int) -> dict:
         "sharpe_vol_target": sharpe_vol_target,
         "sharpe_vol_band":   sharpe_vol_band,
         "sharpe_vol_max":    sharpe_vol_max,
+        # Beta vs S&P gauge
+        "beta_value":        beta_value,
+        "beta_bmk":          beta_bmk,
+        "beta_band":         beta_band,
+        "beta_max":          beta_max,
     }
