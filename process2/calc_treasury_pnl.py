@@ -46,14 +46,9 @@ from psycopg2.extras import execute_batch
 from trg_config import config
 from database2 import pg_connection, get_proc_asof_date
 from models import bond_risk as br
+from models.ust_curve import get_rate as _ust_get_rate
 from utils import hdf_utils, var_utils, stat_utils
 from process2.db_pnl_stat import save_pnl_stat, save_security_sensitivity
-
-# Treasury yield curve column names and their corresponding tenors (years)
-_YIELD_COLS   = ['bc_1month', 'bc_2month', 'bc_3month', 'bc_6month',
-                 'bc_1year',  'bc_2year',  'bc_3year',  'bc_5year',
-                 'bc_7year',  'bc_10year', 'bc_20year', 'bc_30year']
-_YIELD_TENORS = [1/12, 2/12, 3/12, 0.5, 1, 2, 3, 5, 7, 10, 20, 30]
 
 
 # ── DB helpers ─────────────────────────────────────────────────────────────────
@@ -81,30 +76,6 @@ def _get_treasury_securities() -> pd.DataFrame:
     return df
 
 
-def _get_yield_curve(as_of_date: date) -> tuple[list, list]:
-    """Fetch the latest treasury yield curve on or before as_of_date.
-
-    Returns (tenors, yields) where yields are in decimal form (e.g. 0.0432).
-    Non-NULL points only; shorter lists if some maturities are missing.
-    Returns ([], []) if no curve is available.
-    """
-    with pg_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                'SELECT ' + ', '.join(_YIELD_COLS) + ' '
-                'FROM treasury_yield WHERE date <= %s ORDER BY date DESC LIMIT 1',
-                (as_of_date,),
-            )
-            row = cur.fetchone()
-    if row is None:
-        return [], []
-    tenors, yields = [], []
-    for t, v in zip(_YIELD_TENORS, row):
-        if v is not None:
-            tenors.append(t)
-            yields.append(float(v) / 100)   # percentage → decimal
-    return tenors, yields
-
 
 def _calc_prices_from_yield_curve(securities: pd.DataFrame, as_of_date: date) -> pd.Series:
     """Calculate par-relative bond prices from the treasury yield curve.
@@ -117,8 +88,9 @@ def _calc_prices_from_yield_curve(securities: pd.DataFrame, as_of_date: date) ->
     """
     prices = pd.Series(1.0, index=securities['SecurityID'], name='Price')
 
-    tenors_arr, yields_arr = _get_yield_curve(as_of_date)
-    if not tenors_arr:
+    try:
+        _ust_get_rate(1.0, as_of_date)  # probe: raises ValueError if no curve
+    except ValueError:
         print('Warning: no treasury yield curve available for price calculation, using par.')
         return prices
 
@@ -127,7 +99,7 @@ def _calc_prices_from_yield_curve(securities: pd.DataFrame, as_of_date: date) ->
         tenor  = max((row['MaturityDate'] - as_of_date).days / 365.25, 0)
         if tenor <= 0:
             continue
-        y = float(np.interp(tenor, tenors_arr, yields_arr))
+        y = _ust_get_rate(tenor, as_of_date)
         prices[sec_id] = br.bond_price(y, row['CouponRate'], tenor, int(row['PaymentFrequency']))
 
     bad = (prices < 0.75) | (prices > 1.5)
@@ -380,7 +352,7 @@ def test():
 
     # Write all results to Excel
     ts          = datetime.now().strftime('%Y%m%d_%H%M%S')
-    output_dir  = os.path.join(os.path.dirname(__file__), 'output')
+    output_dir  = config['TEST_DIR'] / 'src' / 'process2'
     os.makedirs(output_dir, exist_ok=True)
     output_xlsx = os.path.join(output_dir, f'treasury_pnl_test_{ts}.xlsx')
 

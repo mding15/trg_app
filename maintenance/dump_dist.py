@@ -7,7 +7,7 @@ var_utils.get_dist(), and writes the result to maintenance/CSV/dist.{category}.c
 Usage:
     python dump_dist.py
     python dump_dist.py --category IR
-    python dump_dist.py --input maintenance/CSV/my_ids.csv --category SPREAD
+    python dump_dist.py --input maintenance/CSV/security_ids.csv --category SPREAD
     python dump_dist.py --dry-run
     python dump_dist.py --list
 

@@ -162,6 +162,7 @@ class SecurityInfo(db.Model):
     AssetType = db.Column(db.String(20))
     DataSource = db.Column(db.String(100))
     DateAdded = db.Column(db.Date, nullable=False, default=datetime.now)
+    reviewed = db.Column(db.Boolean, nullable=False, default=False)
     def __repr__(self):
         return f"SecurityInfo('{self.id}', '{self.SecurityID}', '{self.SecurityName}', '{self.AssetClass}', '{self.AssetType}', '{self.DataSource}', '{self.DateAdded}')"
     

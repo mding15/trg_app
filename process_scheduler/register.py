@@ -7,8 +7,9 @@ Each job's script_path is relative to BASE_PATH and will be expanded
 to an absolute path before being sent to the scheduler API.
 
 Usage:
-  python register.py               # register all jobs in jobs.json
-  python register.py as_of_date    # register a single job by ID
+  python register.py                        # register all jobs in jobs.json
+  python register.py as_of_date             # register a single job by ID
+  python register.py --delete test_bed      # delete a job by ID
 """
 
 import sys
@@ -86,6 +87,26 @@ def register_job(job: dict, token: str) -> None:
         raise
 
 
+def delete_job(process_id: str, token: str) -> None:
+    """Delete a job from the scheduler by ID."""
+    url = f'{SCHEDULER_URL}/api/processes/{process_id}?token={token}'
+    req = urllib.request.Request(url, method='DELETE')
+    try:
+        with urllib.request.urlopen(req) as resp:
+            print(f"Deleted:  {process_id} (status {resp.status})")
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            print(f"Not found: {process_id} — already deleted or never registered.")
+        else:
+            print(f"Error {e.code} deleting {process_id}: {e.read().decode()}")
+            raise
+
+
+def delete_by_id(process_id: str) -> None:
+    token = _load_token()
+    delete_job(process_id, token)
+
+
 def register_all() -> None:
     token = _load_token()
     jobs  = _load_jobs()
@@ -105,7 +126,9 @@ def register_by_id(process_id: str) -> None:
 
 
 if __name__ == '__main__':
-    if len(sys.argv) == 2:
+    if len(sys.argv) == 3 and sys.argv[1] == '--delete':
+        delete_by_id(sys.argv[2])
+    elif len(sys.argv) == 2:
         register_by_id(sys.argv[1])
     else:
         register_all()

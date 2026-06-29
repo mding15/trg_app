@@ -34,6 +34,7 @@ from datetime import datetime
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from database2 import pg_connection, get_proc_asof_date
+from mkt_data.price_timeseries import get_current_price
 
 FEED_SOURCE = 'file_upload'
 
@@ -121,25 +122,6 @@ def _load_positions(cur, port_ids: list[int]) -> list[dict]:
     return [dict(zip(cols, row)) for row in cur.fetchall()]
 
 
-def _load_price_cache(cur, security_ids: list[str], as_of_date) -> dict[str, tuple]:
-    """
-    Batch-fetch closing prices from current_price for the given SecurityIDs.
-    Uses the most recent price on or before as_of_date.
-    Returns {SecurityID: (Close, Date)}.
-    """
-    if not security_ids:
-        return {}
-    cur.execute(
-        """
-        SELECT DISTINCT ON ("SecurityID") "SecurityID", "Close", "Date"
-        FROM current_price
-        WHERE "Date" <= %s AND "SecurityID" = ANY(%s)
-        ORDER BY "SecurityID", "Date" DESC
-        """,
-        (as_of_date, security_ids),
-    )
-    return {row[0]: (row[1], row[2]) for row in cur.fetchall()}
-
 
 def _load_bond_price_cache(cur, security_ids: list[str], as_of_date) -> dict[str, tuple]:
     """
@@ -177,16 +159,14 @@ def _archive_and_replace(cur, account_ids: list[int], feed_date, logger: logging
         """
         DELETE FROM proc_positions_hist h
         WHERE h.account_id = ANY(%s)
-          AND h.feed_source = %s
           AND EXISTS (
               SELECT 1 FROM proc_positions p
               WHERE p.account_id = h.account_id
                 AND p.as_of_date  = h.as_of_date
-                AND p.feed_source = h.feed_source
                 AND p.as_of_date  < %s
           )
         """,
-        (ids, FEED_SOURCE, feed_date),
+        (ids, feed_date),
     )
 
     cur.execute(
@@ -209,13 +189,13 @@ def _archive_and_replace(cur, account_ids: list[int], feed_date, logger: logging
     archived = cur.rowcount
 
     cur.execute(
-        "DELETE FROM proc_positions WHERE account_id = ANY(%s) AND as_of_date < %s AND feed_source = %s",
-        (ids, feed_date, FEED_SOURCE),
+        "DELETE FROM proc_positions WHERE account_id = ANY(%s) AND as_of_date < %s",
+        (ids, feed_date),
     )
 
     cur.execute(
-        "DELETE FROM proc_positions WHERE account_id = ANY(%s) AND as_of_date = %s AND feed_source = %s",
-        (ids, feed_date, FEED_SOURCE),
+        "DELETE FROM proc_positions WHERE account_id = ANY(%s) AND as_of_date = %s",
+        (ids, feed_date),
     )
     replaced = cur.rowcount
 
@@ -298,7 +278,7 @@ def process_tracked_positions(as_of_date, account_id=None, dry_run=False) -> int
 
             # ── Step 6: batch-load prices from current_price and bond_price ─────
             sec_ids = list({r['SecurityID'] for r in raw_positions if r.get('SecurityID')})
-            price_cache      = _load_price_cache(cur, sec_ids, as_of_date)
+            price_cache      = get_current_price(sec_ids, as_of_date)
             bond_price_cache = _load_bond_price_cache(cur, sec_ids, as_of_date)
             logger.info(
                 f"Loaded {len(price_cache)} price entries from current_price (latest on or before {as_of_date})"

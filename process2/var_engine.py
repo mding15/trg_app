@@ -464,7 +464,7 @@ def test(account_id: int = 1003):
 
     print(result.to_string())
 
-    out_dir = Path(__file__).resolve().parent / 'test_output'
+    out_dir = config['TEST_DIR'] / 'src' / 'process2'
     out_dir.mkdir(exist_ok=True)
     ts = as_of_date.strftime('%Y%m%d') if hasattr(as_of_date, 'strftime') else str(as_of_date).replace('-', '')
     out_file = out_dir / f'engine_var_{account_id}_{ts}.csv'

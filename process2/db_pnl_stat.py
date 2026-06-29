@@ -140,13 +140,13 @@ _SENS_UPSERT = """
          tenor, delta, gamma, vega, iv,
          ir_tenor, yield, duration, convexity,
          spread_duration, spread_convexity,
-         skewness, kurtosis)
+         skewness, kurtosis, theta)
     VALUES
         (%(as_of_date)s, %(security_id)s,
          %(tenor)s, %(delta)s, %(gamma)s, %(vega)s, %(iv)s,
          %(ir_tenor)s, %(yield)s, %(duration)s, %(convexity)s,
          %(spread_duration)s, %(spread_convexity)s,
-         %(skewness)s, %(kurtosis)s)
+         %(skewness)s, %(kurtosis)s, %(theta)s)
     ON CONFLICT (as_of_date, security_id) DO UPDATE SET
         tenor            = EXCLUDED.tenor,
         delta            = EXCLUDED.delta,
@@ -161,6 +161,7 @@ _SENS_UPSERT = """
         spread_convexity = EXCLUDED.spread_convexity,
         skewness         = EXCLUDED.skewness,
         kurtosis         = EXCLUDED.kurtosis,
+        theta            = EXCLUDED.theta,
         insert_time      = NOW()
 """
 
@@ -181,6 +182,7 @@ _SENS_COL_MAP = {
     'SpreadConvexity': 'spread_convexity',
     'Skewness':        'skewness',
     'Kurtosis':        'kurtosis',
+    'Theta':           'theta',
 }
 
 _SENS_DB_COLS = [
@@ -188,7 +190,7 @@ _SENS_DB_COLS = [
     'tenor', 'delta', 'gamma', 'vega', 'iv',
     'ir_tenor', 'yield', 'duration', 'convexity',
     'spread_duration', 'spread_convexity',
-    'skewness', 'kurtosis',
+    'skewness', 'kurtosis', 'theta',
 ]
 
 
@@ -213,9 +215,7 @@ def save_security_sensitivity(securities: pd.DataFrame, as_of_date) -> int:
 
     as_of = pd.to_datetime(as_of_date).date() if not isinstance(as_of_date, date) else as_of_date
 
-    df = pd.DataFrame()
-    for src_col, db_col in _SENS_COL_MAP.items():
-        df[db_col] = securities[src_col] if src_col in securities.columns else None
+    df = securities.rename(columns=_SENS_COL_MAP)
 
     for col in _SENS_DB_COLS:
         if col not in df.columns:

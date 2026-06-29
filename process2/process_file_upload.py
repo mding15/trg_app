@@ -38,11 +38,12 @@ import openpyxl
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+from trg_config import config
 from database2 import pg_connection
 from security_utils import create_security, add_xref_if_missing
 
 FEED_SOURCE = 'file_upload'
-DEFAULT_FILE = os.path.join(os.path.dirname(__file__), 'test_data', 'file_upload.xlsx')
+DEFAULT_FILE = config['TEST_DIR'] / 'src' / 'process2' / 'file_upload.xlsx'
 POSITIONS_SHEET = 'positions'
 
 

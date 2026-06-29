@@ -196,6 +196,13 @@ def calc_price(op_type, S, K, T, r, sigma):
         price = np.nan
     return price
 
+def calc_theta(op_type, S, K, T, r, sigma):
+    if op_type == 'Call':
+        return equity_options.call_theta(S, K, T, r, sigma)
+    elif op_type == 'Put':
+        return equity_options.put_theta(S, K, T, r, sigma)
+    return np.nan
+
 
 # In[ ]:
 

@@ -52,6 +52,8 @@ def bond_price(y, c, T, q=2):
 
     value = ( a + c/q * (v - v**(n+1)) / (1-v) + v**n) * (v**s)
     return value
+def zero_bond_price(y, T):
+    return (1+y)**(-T)
 
 # dB/B = -D*dy
 def bond_duration(y, c, T, q=2):

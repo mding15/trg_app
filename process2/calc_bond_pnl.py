@@ -405,7 +405,7 @@ def test():
 
     # Write all results to Excel, one sheet per step
     ts          = datetime.now().strftime('%Y%m%d_%H%M%S')
-    output_dir  = os.path.join(os.path.dirname(__file__), 'output')
+    output_dir  = config['TEST_DIR'] / 'src' / 'process2'
     output_xlsx = os.path.join(output_dir, f'bond_pnl_test_{ts}.xlsx')
 
     with pd.ExcelWriter(output_xlsx, engine='openpyxl') as writer:
@@ -500,7 +500,7 @@ def test_ir_pnl():
 
     # Write to Excel
     ts          = datetime.now().strftime('%Y%m%d_%H%M%S')
-    output_dir  = os.path.join(os.path.dirname(__file__), 'output')
+    output_dir  = config['TEST_DIR'] / 'src' / 'process2'
     output_xlsx = os.path.join(output_dir, f'ir_pnl_test_{ts}.xlsx')
 
     with pd.ExcelWriter(output_xlsx, engine='openpyxl') as writer:

@@ -31,6 +31,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 
 import pandas as pd
 
+from trg_config import config
 from database2 import get_proc_asof_date, pg_connection
 from process2 import var_engine
 from process2.db_position_var import insert_results
@@ -195,7 +196,7 @@ def calculate_var(feed_source: str | None = None, as_of_date=None, account_id: i
 def test():
     from pathlib import Path
 
-    output_dir = Path(__file__).resolve().parent / 'test_output'
+    output_dir = config['TEST_DIR'] / 'src' / 'process2'
     output_dir.mkdir(exist_ok=True)
 
     as_of_date = get_proc_asof_date()

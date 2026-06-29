@@ -33,7 +33,7 @@
     "script_path": "api/trgapp/process2/calc_unadj_alt_pnl.py",
     "script_type": "python",
     "schedule_time": null,
-    "dependencies": ["pnl_linear_prod", "pnl_bond", "pnl_treasury"],
+    "dependencies": ["pnl_derivative"],
     "max_retries": 2,
     "retry_delay_seconds": 60,
     "enabled": true,
@@ -47,7 +47,7 @@
     "script_path": "api/trgapp/process2/calc_bond_pnl.py",
     "script_type": "python",
     "schedule_time": null,
-    "dependencies": ["as_of_date", "pnl_treasury"],
+    "dependencies": ["pnl_treasury"],
     "max_retries": 2,
     "retry_delay_seconds": 60,
     "enabled": true,
@@ -61,7 +61,21 @@
     "script_path": "api/trgapp/process2/calc_treasury_pnl.py",
     "script_type": "python",
     "schedule_time": null,
-    "dependencies": ["as_of_date", "tr_extract"],
+    "dependencies": ["pnl_linear_prod", "tr_extract"],
+    "max_retries": 2,
+    "retry_delay_seconds": 60,
+    "enabled": true,
+    "venv_path": null
+  },
+
+  {
+    "id": "pnl_derivative",
+    "name": "Derivative PnL",
+    "description": "Calculates PnL for derivative products (equity options, VIX options, structured notes)",
+    "script_path": "api/trgapp/process2/calc_derivative_pnl.py",
+    "script_type": "python",
+    "schedule_time": null,
+    "dependencies": ["pnl_bond", "consolidate_positions", "yh_eod_price", "tr_extract"],
     "max_retries": 2,
     "retry_delay_seconds": 60,
     "enabled": true,
@@ -75,21 +89,21 @@
     "script_path": "api/trgapp/process2/db_pnl_stat.py",
     "script_type": "python",
     "schedule_time": null,
-    "dependencies": ["pnl_treasury", "pnl_bond"],
+    "dependencies": ["pnl_derivative"],
     "max_retries": 2,
     "retry_delay_seconds": 60,
     "enabled": true,
     "venv_path": null
   },
 
-    {
+  {
     "id": "calc_beta",
     "name": "Beta Calculation",
     "description": "Calculates Beta",
     "script_path": "api/trgapp/process2/calc_beta.py",
     "script_type": "python",
     "schedule_time": null,
-    "dependencies": ["pnl_bond", "pnl_linear_prod", "pnl_linear_prod"],
+    "dependencies": ["pnl_alternative_unadj"],
     "max_retries": 2,
     "retry_delay_seconds": 60,
     "enabled": true,
@@ -159,7 +173,7 @@
     "script_path": "api/trgapp/process2/populate_parent_positions.py",
     "script_type": "python",
     "schedule_time": null,
-    "dependencies": ["mssb_preprocess", "tracked_proc", "test_bed"],
+    "dependencies": ["mssb_preprocess", "tracked_proc"],
     "max_retries": 2,
     "retry_delay_seconds": 60,
     "enabled": true,
@@ -172,7 +186,7 @@
     "script_path": "api/trgapp/process_scheduler/calculate_var.py",
     "script_type": "python",
     "schedule_time": null,
-    "dependencies": ["consolidate_positions"],
+    "dependencies": ["calc_beta"],
     "max_retries": 2,
     "retry_delay_seconds": 60,
     "enabled": true,
@@ -235,19 +249,6 @@
     "venv_path": null
   },
 
-   {
-    "id": "test_bed",
-    "name": "Upload Test Bed Data",
-    "description": "Upload test bed data and run associated processes.",
-    "script_path": "api/trgapp/process2/run_test_bed.py",
-    "script_type": "python",
-    "schedule_time": null,
-    "dependencies": ["mssb_preprocess"],
-    "max_retries": 2,
-    "retry_delay_seconds": 60,
-    "enabled": true,
-    "venv_path": null
-  },
 
   {
     "id": "calc_benchmark",

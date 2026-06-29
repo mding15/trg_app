@@ -53,8 +53,8 @@ DEFAULT_BETA_KEY = 'SP500_1Y'
 ANNUALIZE        = 252
 
 LOG_DIR          = Path(__file__).resolve().parent.parent.parent / 'log'
-TEST_DATA_DIR    = Path(__file__).resolve().parent / 'test_data'
-TEST_OUTPUT_DIR  = Path(__file__).resolve().parent / 'test_output'
+TEST_DATA_DIR    = config['TEST_DIR'] / 'src' / 'process2'
+TEST_OUTPUT_DIR  = config['TEST_DIR'] / 'src' / 'process2'
 
 
 # ---------------------------------------------------------------------------

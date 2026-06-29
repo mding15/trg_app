@@ -1,7 +1,7 @@
 """
 security_lookup.py — Resolve SecurityID from security_xref for positions in an Excel file.
 
-Reads positions from an input sheet, looks up SecurityID via ISIN → CUSIP → BB_GLOBAL →
+Reads positions from an input sheet, looks up SecurityID via TRG_ID → ISIN → CUSIP → BB_GLOBAL →
 Ticker priority, and writes the result (including unresolved rows) to an output sheet in
 the same file.  Other sheets in the workbook are preserved.
 

@@ -464,13 +464,61 @@ def create_tables() -> None:
                     sigma          NUMERIC     NULL
                 )
             """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS sn_replica (
+                    security_id           VARCHAR(20) NOT NULL,
+                    position_id           VARCHAR(20) NOT NULL,
+                    security_type         VARCHAR(50) NOT NULL,
+                    note_notional         NUMERIC     NOT NULL,
+                    notional              NUMERIC     NOT NULL,
+                    quantity              NUMERIC     NOT NULL,
+                    maturity              DATE        NOT NULL,
+                    coupon_rate           NUMERIC     NULL,
+                    trigger_level         NUMERIC     NULL,
+                    strike                NUMERIC     NULL,
+                    underlying            VARCHAR(20) NOT NULL,
+                    underlying_sec_id     VARCHAR(20) NOT NULL,
+                    init_underlying_price NUMERIC     NULL,
+                    init_price_date       DATE        NULL,
+                    PRIMARY KEY (security_id, position_id)
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS sn_replica_calc (
+                    id               SERIAL      PRIMARY KEY,
+                    security_id      VARCHAR(20) NOT NULL,
+                    as_of_date       DATE        NOT NULL,
+                    position_id      VARCHAR(20) NOT NULL,
+                    underlying_price NUMERIC     NULL,
+                    tenor            NUMERIC     NULL,
+                    risk_free_rate   NUMERIC     NULL,
+                    iv               NUMERIC     NULL,
+                    value            NUMERIC     NULL,
+                    delta            NUMERIC     NULL,
+                    gamma            NUMERIC     NULL,
+                    UNIQUE (security_id, as_of_date, position_id)
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS slide_shocks (
+                    id         SERIAL      PRIMARY KEY,
+                    slide_name VARCHAR(50) NOT NULL,
+                    shock      NUMERIC     NOT NULL,
+                    UNIQUE (slide_name, shock)
+                )
+            """)
 
         conn.commit()
 
 
 def migrate_tables() -> None:
-    """No-op — all migrations are now reflected in create_tables()."""
-    pass
+    with pg_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                ALTER TABLE sn_replica
+                    ADD COLUMN IF NOT EXISTS underlying_sec_id VARCHAR(20)
+            """)
+        conn.commit()
 
 
 if __name__ == "__main__":

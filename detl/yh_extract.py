@@ -296,9 +296,9 @@ def extract_eod(tickers=None, asof_date=None):
 
 def test_eod():
     import datetime
-    tickers = ['AAPL', 'SPY']
-    asof_date = datetime.date(2026, 6, 15)
-    extract_eod(tickers=None, asof_date=asof_date)
+    tickers = ['AAPL', 'SPY', '^VIX']
+    asof_date = datetime.date(2026, 6, 26)
+    extract_eod(tickers=tickers, asof_date=asof_date)
     
 
 #
@@ -544,7 +544,8 @@ def extract_eod_price(df):
        'regularMarketPrice', 'regularMarketTime', 'regularMarketOpen',
        'regularMarketDayHigh', 'regularMarketDayLow',
        'regularMarketVolume', 'regularMarketPreviousClose']
-    df = df[COLUMNS].copy()
+    cols = [c for c in COLUMNS if c in df.columns]
+    df = df[cols].copy()
     df = df[~df['regularMarketTime'].isna()]
     df['PriceTime'] = df['regularMarketTime'].apply(date_utils.timestamp_to_datetime)
 

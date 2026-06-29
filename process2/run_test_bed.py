@@ -40,6 +40,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 import pandas as pd
 from psycopg2.extras import execute_batch
 
+from trg_config import config
 from database2 import pg_connection, get_proc_asof_date
 from mkt_data import mkt_timeseries
 from process2.process_mssb_positions import _archive_and_replace
@@ -47,8 +48,8 @@ from process2.calculate_var import calculate_var
 
 
 FEED_SOURCE       = 'test'
-CSV_PATH          = os.path.join(os.path.dirname(__file__), 'test_data', 'proc_positions.csv')
-PRICE_HISTORY_CSV = os.path.join(os.path.dirname(__file__), 'test_data', 'price_history.csv')
+CSV_PATH          = config['TEST_DIR'] / 'src' / 'process2' / 'proc_positions.csv'
+PRICE_HISTORY_CSV = config['TEST_DIR'] / 'src' / 'process2' / 'price_history.csv'
 
 
 # ── logging ────────────────────────────────────────────────────────────────────

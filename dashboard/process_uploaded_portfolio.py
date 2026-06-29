@@ -4,7 +4,7 @@ process_uploaded_portfolio.py — Process an uploaded portfolio file through the
 Pipeline:
     1.  Read the input Excel file (params, positions).
     2a. Map template column names → VaR engine convention.
-    2b. Resolve SecurityID from security_xref (ISIN → CUSIP → Ticker).
+    2b. Resolve SecurityID via TRG_ID → ISIN → CUSIP → BB_GLOBAL → Ticker.
     2c. Enrich positions with security attributes via update_security_info().
     2d. Fill/update prices via update_position_price(); split active vs excluded.
     3.  Run VaR engine on active positions.
@@ -75,7 +75,7 @@ def process_portfolio(file_path: Path, port_id: int) -> None:
 
     asof_date = params.get('AsofDate')
 
-    # ── 2b. Resolve SecurityID (ISIN → CUSIP → Ticker) ───────────────────────
+    # ── 2b. Resolve SecurityID (TRG_ID → ISIN → CUSIP → BB_GLOBAL → Ticker) ──
     positions = lookup_security_ids(positions)
     resolved = positions['SecurityID'].notna().sum()
     logger.info(f'Security lookup: {resolved}/{len(positions)} positions resolved')

@@ -122,10 +122,24 @@ def put_vega(S, K, T, r, sigma):
     delta_up = price_up - price_base
     delta_dn = price_dn - price_base
     vega = (delta_up - delta_dn)/2
-    
+
     return vega
-    
-    
+
+
+# Theta: change in option price for 1 calendar day passing (negative for long options)
+def call_theta(S, K, T, r, sigma):
+    dt = 1/365
+    price_base = BS_CALL(S, K, T, r, sigma)
+    price_dt   = BS_CALL(S, K, max(T - dt, 1e-6), r, sigma)
+    return price_dt - price_base
+
+def put_theta(S, K, T, r, sigma):
+    dt = 1/365
+    price_base = BS_PUT(S, K, T, r, sigma)
+    price_dt   = BS_PUT(S, K, max(T - dt, 1e-6), r, sigma)
+    return price_dt - price_base
+
+
 
 
 # # Test

@@ -699,12 +699,14 @@ CREATE TABLE public.security_sensitivity (
     spread_convexity FLOAT        NULL,
     skewness         FLOAT      NULL,
     kurtosis         FLOAT      NULL,
+    theta            FLOAT      NULL,
     insert_time      TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
     CONSTRAINT security_sensitivity_pkey PRIMARY KEY (as_of_date, security_id)
 );
 -- Migration (run once against live DB):
 -- ALTER TABLE security_sensitivity ADD COLUMN IF NOT EXISTS skewness FLOAT NULL;
 -- ALTER TABLE security_sensitivity ADD COLUMN IF NOT EXISTS kurtosis FLOAT NULL;
+-- ALTER TABLE security_sensitivity ADD COLUMN IF NOT EXISTS theta FLOAT NULL;
 
 -- ---------------------------------------------------------------
 -- security_pnl_stat  (P&L distribution statistics per security × date × type)
@@ -773,6 +775,19 @@ CREATE TABLE public.security_info (
 	"AssetType" varchar(20) NULL,
 	"DataSource" varchar(100) NULL,
 	"DateAdded" date DEFAULT CURRENT_DATE NULL,
+	"reviewed" bool DEFAULT false NOT NULL,
 	CONSTRAINT security_info_pkey PRIMARY KEY (id)
+);
+
+CREATE TABLE public.option_info (
+	id serial4 NOT NULL,
+	security_id varchar(20) NULL,
+	option_type varchar(20) NULL,
+	option_class varchar(20) NULL,
+	maturity date NULL,
+	strike numeric NULL,
+	underlying varchar(100) NULL,
+	underlying_sec_id varchar(20) NULL,
+	CONSTRAINT option_info_pkey PRIMARY KEY (id)
 );
 
