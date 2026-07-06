@@ -8,7 +8,7 @@ Public API:
     process_portfolio(file_path, port_id) -> None  (see process_uploaded_portfolio.py)
     generate_input_template(account_id, client_id=None) -> (positions_df, params, limit, client_id)
     save_portfolio_to_template(positions, params, limit, client_id, filename) -> Path
-    clone_portfolio(port_id, new_port_name, username, target_weights=None, background=True) -> int
+    clone_portfolio(input_port_id, new_port_name, username, target_weights=None, background=True) -> int
 """
 from __future__ import annotations
 
@@ -29,6 +29,7 @@ from database2 import pg_connection
 from trg_config import config
 from dashboard.db_port_position_var import insert_port_position_var
 from dashboard.process_uploaded_portfolio import process_portfolio
+from dashboard.whatif import decode_whatif_id, encode_whatif_id
 
 logger = logging.getLogger(__name__)
 
@@ -426,14 +427,14 @@ _DB_TO_ENGINE = {
     'gamma_var':              'GAMMA VaR',
     'total_cost':             'total_cost',
     'is_option':              'is_option',
-    'broker_name':            'BrokerName',
+    'broker':                 'BrokerName',
     'broker_account':         'BrokerAccount',
 }
 
 # Non-VaR columns present in both port_position_var and position_var
 _CLONE_POSITION_COLS = """
     pos_id, as_of_date,
-    security_id, security_name, isin, cusip, ticker, broker_name, broker_account,
+    security_id, security_name, isin, cusip, ticker, broker, broker_account,
     quantity, market_value, total_cost, currency, last_price, last_price_date,
     asset_class, asset_type, "class", sc1, sc2,
     country, region, sector, industry,
@@ -609,27 +610,30 @@ def _clone_in_background(port_id: int, port_name: str,
         _update_portfolio_status(port_id, 'Error', str(e))
 
 
-def clone_portfolio(port_id: int, new_port_name: str, username: str,
+def clone_portfolio(input_port_id: int, new_port_name: str, username: str,
                     target_weights: dict | None = None, background: bool = True) -> int:
     """Clone a portfolio under a new name, reading directly from the database.
 
-    For adhoc sources (account_id is None): reads from port_position_var + port_parameters.
+    input_port_id uses the What-If encoding: adhoc = port_id + 1_000_000, tracked = account_id.
+    For adhoc sources: reads from port_position_var + port_parameters.
     For tracked sources: reads from position_var + account_parameters.
     target_weights: {key: pct} e.g. {'fi': 40, 'eq': 35} — scales Quantity/MarketValue so
     the cloned portfolio matches the requested allocation percentages.
     Returns the new port_id.
     """
-    # Step 1: Fetch source portfolio_info
-    with pg_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                'SELECT account_id, client_id FROM portfolio_info WHERE port_id = %s',
-                (port_id,),
-            )
-            row = cur.fetchone()
-    if not row:
-        raise Exception(f'portfolio not found: port_id={port_id}')
-    src_account_id, _src_client_id = row
+    port_type, raw_id = decode_whatif_id(input_port_id)
+
+    # Step 1 (adhoc only): confirm portfolio_info row exists
+    if port_type == 'adhoc':
+        with pg_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    'SELECT 1 FROM portfolio_info WHERE port_id = %s',
+                    (raw_id,),
+                )
+                row = cur.fetchone()
+        if not row:
+            raise Exception(f'portfolio not found: port_id={raw_id}')
 
     # Step 2: Resolve caller's client_id and new filename
     with pg_connection() as conn:
@@ -642,10 +646,10 @@ def clone_portfolio(port_id: int, new_port_name: str, username: str,
     new_filename = f'{new_port_name}.xlsx'
 
     # Step 3: Build positions + params from DB
-    if src_account_id is None:
-        positions, params, asof_date = _build_positions_from_adhoc(port_id)
+    if port_type == 'adhoc':
+        positions, params, asof_date = _build_positions_from_adhoc(raw_id)
     else:
-        positions, params, asof_date = _build_positions_from_tracked(src_account_id)
+        positions, params, asof_date = _build_positions_from_tracked(raw_id)
     positions = positions.copy()
 
     # Step 4: Apply target weights (scale Quantity and MarketValue by AssetClass)
@@ -672,7 +676,7 @@ def clone_portfolio(port_id: int, new_port_name: str, username: str,
 
     # Step 6: Insert portfolio_info
     new_port_id, _ = _insert_portfolio(username, new_port_name, new_file_path.name, port_type='adhoc')
-    logger.info(f'cloned port_id={port_id} -> new port_id={new_port_id} ({new_port_name})')
+    logger.info(f'cloned input_port_id={input_port_id} ({port_type}/{raw_id}) -> new port_id={new_port_id} ({new_port_name})')
 
     # Step 7: Insert DB records and run VaR pipeline
     if background:
@@ -766,9 +770,17 @@ def clone_portfolio_old(port_id: int, new_port_name: str, username: str,
 
 # ── Test ──────────────────────────────────────────────────────────────────────
 
-def test_clone(port_id: int = 5359,
+def test_clone(port_id: int | None = 5359,
+               account_id: int | None = None,
                new_port_name: str = 'TEST_CLONE_5359',
                username: str = 'test1@trg.com') -> None:
+
+    if account_id is not None:
+        input_port_id = encode_whatif_id('tracked', account_id)
+    elif port_id is not None:
+        input_port_id = encode_whatif_id('adhoc', port_id)
+    else:
+        raise ValueError('provide either port_id or account_id')
 
     target_weights = {
         'fi': 40,
@@ -777,15 +789,18 @@ def test_clone(port_id: int = 5359,
         'ma': 5,
         'mm': 5,
     }
-    clone_portfolio(port_id, new_port_name, username,
-                    target_weights, background = False)
+    clone_portfolio(input_port_id, new_port_name, username,
+                    target_weights, background=False)
 
 if __name__ == '__main__':
     import argparse
     logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)-8s %(message)s')
     parser = argparse.ArgumentParser(description='Test clone_portfolio step by step.')
-    parser.add_argument('--port-id',       type=int, default=5359,               metavar='PORT_ID')
-    parser.add_argument('--name',          type=str, default='TEST_CLONE_5359',  metavar='NAME')
-    parser.add_argument('--username',      type=str, default='test1@trg.com',    metavar='USER')
+    group = parser.add_mutually_exclusive_group(required=False)
+    group.add_argument('--port-id',    type=int, metavar='PORT_ID',    help='adhoc port_id')
+    group.add_argument('--account-id', type=int, metavar='ACCOUNT_ID', help='tracked account_id')
+    parser.add_argument('--name',     type=str, default='TEST_CLONE_5359', metavar='NAME')
+    parser.add_argument('--username', type=str, default='test1@trg.com',   metavar='USER')
     args = parser.parse_args()
-    test_clone(port_id=args.port_id, new_port_name=args.name, username=args.username)
+    test_clone(port_id=args.port_id, account_id=args.account_id,
+               new_port_name=args.name, username=args.username)

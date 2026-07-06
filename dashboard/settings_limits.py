@@ -1,5 +1,8 @@
 from database2 import pg_connection
 
+_BMK_KEYS = ['sharpe_vol', 'sharpe_var']
+_BMK_DEFAULTS = {k: 0.15 for k in _BMK_KEYS}
+
 _CONC_KEYS = [
     "con_limit_asset_pct",
     "con_limit_region_pct",
@@ -35,8 +38,33 @@ _ALLOC_KEYS = [
 ALL_KEYS = _CONC_KEYS + _RISK_KEYS + _ALLOC_KEYS
 
 
+def _read_benchmark_metrics(cur, account_id):
+    """Return {sharpe_vol, sharpe_var} from benchmark_metrics for the account's benchmark.
+    Falls back to _BMK_DEFAULTS when no benchmark is assigned or metrics are missing."""
+    cur.execute(
+        """
+        SELECT bm.sharpe_vol, bm.sharpe_var
+        FROM account_benchmark ab
+        JOIN benchmark_metrics bm ON bm.benchmark_id = ab.benchmark_id
+        WHERE ab.account_id = %s
+          AND bm.date = (
+              SELECT MAX(bm2.date) FROM benchmark_metrics bm2
+              WHERE bm2.benchmark_id = ab.benchmark_id
+          )
+        """,
+        (account_id,),
+    )
+    row = cur.fetchone()
+    if row is None:
+        return _BMK_DEFAULTS.copy()
+    return {
+        'sharpe_vol': float(row[0]) if row[0] is not None else _BMK_DEFAULTS['sharpe_vol'],
+        'sharpe_var': float(row[1]) if row[1] is not None else _BMK_DEFAULTS['sharpe_var'],
+    }
+
+
 def read_account_limits(account_id):
-    """Return {concentration: {...}, risk: {...}} from account_limit for the given account."""
+    """Return {concentration: {...}, risk: {...}, alloc: {...}, bmk: {...}} for the given account."""
     with pg_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -45,11 +73,13 @@ def read_account_limits(account_id):
                 (account_id, ALL_KEYS),
             )
             rows = {row[0]: float(row[1]) for row in cur.fetchall()}
+            bmk = _read_benchmark_metrics(cur, account_id)
 
     return {
         "concentration": {k: rows.get(k) for k in _CONC_KEYS},
         "risk":          {k: rows.get(k) for k in _RISK_KEYS},
         "alloc":         {k: rows.get(k) for k in _ALLOC_KEYS},
+        "bmk":           bmk,
     }
 
 

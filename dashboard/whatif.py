@@ -406,6 +406,22 @@ def _fetch_account_params_batch(cur, account_ids: list) -> dict:
     }
 
 
+# ── What-If ID encoding (tracked = account_id, adhoc = port_id + 1_000_000) ──
+
+def encode_whatif_id(port_type: str, raw_id: int) -> int:
+    """Return the external What-If portfolio ID from a type + raw DB id."""
+    if port_type == 'adhoc':
+        return raw_id + 1_000_000
+    return raw_id  # 'tracked' — raw value is account_id
+
+
+def decode_whatif_id(input_port_id: int) -> tuple[str, int]:
+    """Return (port_type, raw_id) from an external What-If portfolio ID."""
+    if input_port_id >= 1_000_000:
+        return 'adhoc', input_port_id - 1_000_000
+    return 'tracked', input_port_id
+
+
 # ── Entry builders (module-level so they can be reused) ───────────────────────
 
 def _weights_and_conc(weights: dict | None) -> tuple:
@@ -438,7 +454,7 @@ def _normalize_adhoc(port_id: int, name: str, summary: dict) -> dict:
     except Exception:
         as_of_fmt = as_of_str or '—'
     return {
-        'id':          port_id + 1_000_000,
+        'id':          encode_whatif_id('adhoc', port_id),
         'name':        name,
         'as_of_date':  as_of_fmt,
         'aum':         summary.get('aum'),
@@ -573,32 +589,34 @@ def get_whatif_portfolios(username: str, account_id: int | None = None) -> list:
 _WHATIF_SLICES = ["asset", "region", "industry", "currency"]
 
 
-def get_whatif_allocations(port_id: int) -> dict:
+def get_whatif_allocations(input_port_id: int) -> dict:
     """
     Return allocation drill-down data for the four What-If slices.
     Fetches from position_var (live) or port_position_var (ad-hoc).
     Returns {} if no data is available.
+
+    input_port_id convention (matches get_whatif_portfolios):
+      >= 1_000_000 → adhoc portfolio; real port_id = input_port_id - 1_000_000
+      <  1_000_000 → tracked portfolio; value is account_id directly
     """
+    port_type, raw_id = decode_whatif_id(input_port_id)
+
     with pg_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                "SELECT account_id FROM portfolio_info WHERE port_id = %s",
-                (port_id,),
-            )
-            row = cur.fetchone()
-
-        if row is None:
-            return {}
-
-        account_id = row[0]
-
-        if account_id is not None:
-            as_of_date = _latest_as_of_date(conn, account_id)
+        if port_type == 'adhoc':
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT account_id FROM portfolio_info WHERE port_id = %s",
+                    (raw_id,),
+                )
+                row = cur.fetchone()
+            if row is None:
+                return {}
+            df = _fetch_flat_port(conn, raw_id)
+        else:  # tracked
+            as_of_date = _latest_as_of_date(conn, raw_id)
             if as_of_date is None:
                 return {}
-            df = _fetch_flat(conn, account_id, as_of_date)
-        else:
-            df = _fetch_flat_port(conn, port_id)
+            df = _fetch_flat(conn, raw_id, as_of_date)
 
     if df.empty:
         return {}

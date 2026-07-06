@@ -16,7 +16,7 @@ CREATE TABLE port_position_var (
     isin                     TEXT,
     cusip                    TEXT,
     ticker                   TEXT,
-    broker_name              TEXT,
+    broker                   TEXT,
     broker_account           TEXT,
 
     -- position
