@@ -8,6 +8,7 @@ PARAMETER_OPTIONS = {
     "beta_key":     ["SP500-1Y", "SP500-3Y","MSCI World", "MSCI EM", "Bloomberg Agg", "Russell 2000"],
     "exp_return":   ["MS-Capital-Market", "User-Defined"],
     #"exp_return":   ["Historical", "CAPM", "Black-Litterman", "Factor", "Equilibrium", "MS-Capital-Market", "User-Defined"],
+    "risk_level":   ["conservative", "moderate", "aggressive", "custom"],
 }
 
 
@@ -15,7 +16,7 @@ _COLS = list(PARAMETER_OPTIONS.keys())
 
 
 def read_account_parameters(account_id):
-    """Return the most recent row from account_parameters as a dict of the 6 parameter fields."""
+    """Return the most recent row from account_parameters as a dict of the parameter fields."""
     with pg_connection() as conn:
         with conn.cursor() as cur:
             cols = ", ".join(_COLS)
