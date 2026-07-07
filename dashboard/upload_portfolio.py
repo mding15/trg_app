@@ -19,6 +19,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 import datetime
 import logging
 import threading
+from copy import copy as _copy
 from pathlib import Path
 
 import openpyxl
@@ -194,15 +195,18 @@ _WEIGHT_KEY_TO_CLASS = {
 }
 
 _DB_TO_TEMPLATE_COLS = {
-    'pos_id':       'ID',
-    'security_name':'SecurityName',
-    'isin':         'ISIN',
-    'cusip':        'Cusip',
-    'ticker':       'Ticker',
-    'quantity':     'Quantity',
-    'market_value': 'Market Value',
-    'asset_class':  'Asset Class',
-    'currency':     'Currency',
+    'pos_id':         'ID',
+    'security_name':  'SecurityName',
+    'isin':           'ISIN',
+    'cusip':          'Cusip',
+    'ticker':         'Ticker',
+    'quantity':       'Quantity',
+    'market_value':   'Market Value',
+    'asset_class':    'Asset Class',
+    'currency':       'Currency',
+    'total_cost':     'Total Cost',
+    'broker':         'Broker Name',
+    'broker_account': 'Broker Account',
 }
 
 
@@ -230,7 +234,8 @@ def generate_input_template(account_id: int, client_id: int | None = None) -> tu
             cur.execute(
                 """
                 SELECT pos_id, security_name, isin, cusip, ticker,
-                       quantity, market_value, "class" AS asset_class, currency, as_of_date
+                       quantity, market_value, "class" AS asset_class, currency,
+                       total_cost, broker, broker_account, as_of_date
                 FROM position_var
                 WHERE account_id = %s
                   AND as_of_date = (SELECT MAX(as_of_date) FROM position_var WHERE account_id = %s)
@@ -339,10 +344,34 @@ def save_portfolio_to_template(positions: pd.DataFrame, params: dict, limit: dic
     # ── Fill positions sheet ──────────────────────────────────────────────────
     ws_pos = wb[_POSITIONS_SHEET]
     header = {cell.value: cell.column for cell in ws_pos[1]}
+
+    # Capture row 3 format before clearing (row 2 has special header-like formatting)
+    template_max_row = ws_pos.max_row
+    row3_fmt = {
+        cell.column: {
+            'font':          _copy(cell.font),
+            'fill':          _copy(cell.fill),
+            'border':        _copy(cell.border),
+            'alignment':     _copy(cell.alignment),
+            'number_format': cell.number_format,
+        }
+        for cell in ws_pos[3]
+    }
+
     for row in ws_pos.iter_rows(min_row=2, max_row=ws_pos.max_row):
         for cell in row:
             cell.value = None
+
     for r_idx, row_dict in enumerate(positions.to_dict('records'), start=2):
+        # Apply row 3 format to rows beyond the original template range
+        if r_idx > template_max_row:
+            for col_idx, fmt in row3_fmt.items():
+                c = ws_pos.cell(row=r_idx, column=col_idx)
+                c.font          = _copy(fmt['font'])
+                c.fill          = _copy(fmt['fill'])
+                c.border        = _copy(fmt['border'])
+                c.alignment     = _copy(fmt['alignment'])
+                c.number_format = fmt['number_format']
         for col_name, col_idx in header.items():
             if col_name in row_dict:
                 ws_pos.cell(row=r_idx, column=col_idx).value = row_dict[col_name]
@@ -671,6 +700,7 @@ def clone_portfolio(input_port_id: int, new_port_name: str, username: str,
     template_positions = positions.rename(columns={
         'pos_id': 'ID', 'CUSIP': 'Cusip',
         'MarketValue': 'Market Value', 'AssetClass': 'Asset Class',
+        'total_cost': 'Total Cost', 'BrokerName': 'Broker Name', 'BrokerAccount': 'Broker Account',
     })
     new_file_path = save_portfolio_to_template(template_positions, params, {}, client_id, new_filename)
 
