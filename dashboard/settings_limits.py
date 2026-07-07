@@ -44,13 +44,19 @@ def _read_benchmark_metrics(cur, account_id):
     cur.execute(
         """
         SELECT bm.sharpe_vol, bm.sharpe_var
-        FROM account_benchmark ab
-        JOIN benchmark_metrics bm ON bm.benchmark_id = ab.benchmark_id
-        WHERE ab.account_id = %s
-          AND bm.date = (
-              SELECT MAX(bm2.date) FROM benchmark_metrics bm2
-              WHERE bm2.benchmark_id = ab.benchmark_id
-          )
+        FROM (
+            SELECT benchmark
+            FROM account_parameters
+            WHERE account_id = %s AND benchmark IS NOT NULL
+            ORDER BY updated_at DESC
+            LIMIT 1
+        ) ap
+        JOIN benchmark b ON b.benchmark_name = ap.benchmark
+        JOIN benchmark_metrics bm ON bm.benchmark_id = b.benchmark_id
+        WHERE bm.date = (
+            SELECT MAX(bm2.date) FROM benchmark_metrics bm2
+            WHERE bm2.benchmark_id = b.benchmark_id
+        )
         """,
         (account_id,),
     )

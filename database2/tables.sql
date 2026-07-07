@@ -66,6 +66,7 @@ CREATE TABLE public.account_parameters (
 	benchmark varchar(20) null,
 	exp_return varchar(20) null,
 	gauge_measure varchar(20) null,
+	risk_level varchar(20) DEFAULT 'custom' null,
 	updated_at timestamp DEFAULT now() NOT null
 );
 
@@ -79,6 +80,7 @@ CREATE TABLE public.account_parameters_history (
 	benchmark varchar(20) null,
 	exp_return varchar(20) null,
 	gauge_measure varchar(20) null,
+	risk_level varchar(20) null,
 	valid_from timestamp NOT NULL,
 	archived_at timestamp DEFAULT now() NOT NULL
 );
@@ -173,7 +175,7 @@ CREATE TABLE public.port_positions (
 	asset_class varchar(50) NULL,
 	asset_type varchar(50) NULL,
 	total_cost numeric NULL,
-	broker text NULL,
+	broker_name text NULL,
 	broker_account text NULL
 );
 CREATE INDEX idx_port_positions_port_id ON public.port_positions USING btree (port_id);
@@ -791,3 +793,432 @@ CREATE TABLE public.option_info (
 	CONSTRAINT option_info_pkey PRIMARY KEY (id)
 );
 
+-- ---------------------------------------------------------------
+-- Tables migrated from create_tables.py (2026-07-06)
+-- ---------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS public.account (
+    account_id        SERIAL       PRIMARY KEY,
+    account_name      VARCHAR(120) NOT NULL,
+    short_name        VARCHAR(20)  NULL,
+    owner_id          INT          NOT NULL,
+    client_id         INT          NOT NULL,
+    parent_account_id INT          DEFAULT NULL REFERENCES public.account(account_id),
+    create_time       TIMESTAMP    DEFAULT NOW(),
+    next_run_time     TIMESTAMP    NULL
+);
+
+CREATE TABLE IF NOT EXISTS public.db_mv_history (
+    id             SERIAL PRIMARY KEY,
+    account_id     INT    NOT NULL,
+    as_of_date     DATE   NOT NULL,
+    security_id    TEXT   NOT NULL,
+    broker         TEXT   NULL,
+    broker_account TEXT   NULL,
+    market_value   FLOAT,
+    UNIQUE (account_id, as_of_date, security_id, broker, broker_account)
+);
+
+CREATE TABLE IF NOT EXISTS public.db_portfolio_summary (
+    id              SERIAL    PRIMARY KEY,
+    account_id      INT       NOT NULL,
+    as_of_date      DATE      NOT NULL,
+    aum             FLOAT,
+    num_positions   INT,
+    day_pnl         FLOAT,
+    day_return      FLOAT,
+    mtd_return      FLOAT,
+    ytd_return      FLOAT,
+    one_year_return FLOAT,
+    unrealized_gain  FLOAT,
+    var_1d_95        FLOAT,
+    var_1d_99        FLOAT,
+    var_10d_99       FLOAT,
+    es_1d_95         FLOAT,
+    es_1d_99         FLOAT,
+    volatility       FLOAT,
+    sharpe_vol       FLOAT,
+    sharpe_var       FLOAT,
+    sharpe_es        FLOAT,
+    beta             FLOAT,
+    max_drawdown      FLOAT,
+    top_five_conc     FLOAT,
+    three_year_return FLOAT,
+    si_return         FLOAT,
+    expected_return   NUMERIC,
+    updated_at       TIMESTAMP NOT NULL DEFAULT NOW(),
+    UNIQUE (account_id, as_of_date)
+);
+
+CREATE TABLE IF NOT EXISTS public.db_positions (
+    id              SERIAL    PRIMARY KEY,
+    account_id      INT       NOT NULL,
+    as_of_date      DATE      NOT NULL,
+    security_id     TEXT      NOT NULL,
+    ticker          TEXT      NULL,
+    name            TEXT      NULL,
+    asset_class     TEXT      NULL,
+    currency        TEXT      NULL,
+    market_value    FLOAT,
+    weight          FLOAT,
+    day_pnl         FLOAT,
+    day_return      FLOAT,
+    mtd_return      FLOAT,
+    ytd_return      FLOAT,
+    one_year_return FLOAT,
+    var_contrib     FLOAT,
+    unrealized_gain FLOAT     NULL,
+    broker          TEXT      NULL,
+    broker_account  TEXT      NULL,
+    updated_at      TIMESTAMP NOT NULL DEFAULT NOW(),
+    UNIQUE (account_id, as_of_date, security_id, broker, broker_account)
+);
+
+CREATE TABLE IF NOT EXISTS public.db_concentrations (
+    id            SERIAL    PRIMARY KEY,
+    account_id    INT       NOT NULL,
+    as_of_date    DATE      NOT NULL,
+    category      TEXT      NOT NULL,
+    category_name TEXT      NULL,
+    max_weight    FLOAT     NULL,
+    limit_value   FLOAT     NULL,
+    ratio         FLOAT     NULL,
+    updated_at    TIMESTAMP NOT NULL DEFAULT NOW(),
+    UNIQUE (account_id, as_of_date, category)
+);
+
+CREATE TABLE IF NOT EXISTS public.mssb_secty_map (
+    id           SERIAL       PRIMARY KEY,
+    trg_sec_id   INT          NOT NULL,
+    sec_cusip    VARCHAR(20)  NOT NULL,
+    sec_isin     VARCHAR(20)  NOT NULL,
+    sec_sedol    VARCHAR(20)  NOT NULL,
+    sec_symbol   VARCHAR(20)  NOT NULL,
+    description  TEXT         NULL,
+    updated_at   TIMESTAMP    NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.proc_positions (
+    id              SERIAL    PRIMARY KEY,
+    as_of_date      DATE      NOT NULL,
+    account_id      INT       NOT NULL,
+    position_id     TEXT      NOT NULL,
+    security_id     TEXT      NOT NULL,
+    security_name   TEXT      NOT NULL,
+    isin            TEXT      NOT NULL,
+    cusip           TEXT      NOT NULL,
+    ticker          TEXT      NOT NULL,
+    quantity        FLOAT     NULL,
+    market_value    FLOAT     NULL,
+    asset_class     TEXT      NULL,
+    currency        TEXT      NOT NULL,
+    broker_account  TEXT      NOT NULL,
+    broker          TEXT      NULL,
+    insert_time     TIMESTAMP NOT NULL DEFAULT NOW(),
+    last_price      NUMERIC   NULL,
+    last_price_date DATE      NULL,
+    feed_source     TEXT      NULL,
+    total_cost      NUMERIC   NULL
+);
+
+CREATE TABLE IF NOT EXISTS public.mssb_posit (
+    feed_date                    DATE     NULL,
+    routing_code                 TEXT     NULL,
+    account                      TEXT     NULL,
+    cusip                        TEXT     NULL,
+    security_description         TEXT     NULL,
+    quantity                     NUMERIC  NULL,
+    market_base                  NUMERIC  NULL,
+    market_local                 NUMERIC  NULL,
+    coupon_rate                  NUMERIC  NULL,
+    issue_date                   DATE     NULL,
+    maturity_date                DATE     NULL,
+    original_face                NUMERIC  NULL,
+    factor                       NUMERIC  NULL,
+    currency                     TEXT     NULL,
+    symbol                       TEXT     NULL,
+    total_cost                   NUMERIC  NULL,
+    exchange                     TEXT     NULL,
+    account_type                 TEXT     NULL,
+    security_code                TEXT     NULL,
+    security_no                  TEXT     NULL,
+    sedol                        TEXT     NULL,
+    isin                         TEXT     NULL,
+    settlement_quantity          NUMERIC  NULL,
+    market_base_sd               NUMERIC  NULL,
+    product_id                   TEXT     NULL,
+    restricted_sec_flag          TEXT     NULL,
+    restricted_qnty              NUMERIC  NULL,
+    long_short_indicator         TEXT     NULL,
+    blank_1                      TEXT     NULL,
+    quantity_1                   NUMERIC  NULL,
+    symbol_cusip                 TEXT     NULL,
+    position_as_of_date          DATE     NULL,
+    alternate_security_indicator TEXT     NULL,
+    wash_sales_indicator         TEXT     NULL,
+    partial_call_quantity        NUMERIC  NULL,
+    blank_2                      TEXT     NULL,
+    accrued_interest             NUMERIC  NULL
+);
+
+CREATE TABLE IF NOT EXISTS public.proc_positions_hist (
+    id              SERIAL    PRIMARY KEY,
+    as_of_date      DATE      NOT NULL,
+    account_id      INT       NOT NULL,
+    position_id     TEXT      NOT NULL,
+    security_id     TEXT      NOT NULL,
+    security_name   TEXT      NOT NULL,
+    isin            TEXT      NOT NULL,
+    cusip           TEXT      NOT NULL,
+    ticker          TEXT      NOT NULL,
+    quantity        FLOAT     NULL,
+    market_value    FLOAT     NULL,
+    asset_class     TEXT      NULL,
+    currency        TEXT      NOT NULL,
+    broker_account  TEXT      NOT NULL,
+    broker          TEXT      NULL,
+    insert_time     TIMESTAMP NOT NULL DEFAULT NOW(),
+    archived_at     TIMESTAMP NOT NULL DEFAULT NOW(),
+    last_price      NUMERIC   NULL,
+    last_price_date DATE      NULL,
+    feed_source     TEXT      NULL,
+    total_cost      NUMERIC   NULL
+);
+
+CREATE TABLE IF NOT EXISTS public.broker_account (
+    id             SERIAL    PRIMARY KEY,
+    account_id     INT       NOT NULL,
+    broker_account TEXT      NOT NULL,
+    broker         TEXT      NOT NULL,
+    routing_code   TEXT      NULL,
+    name           TEXT      NULL,
+    setup_user_id  INT       NULL REFERENCES public."user"(user_id),
+    auth_expiry    DATE      NULL,
+    status         TEXT      NOT NULL DEFAULT 'Pending',
+    updated_at     TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.broker_feed_summary (
+    id                SERIAL    PRIMARY KEY,
+    broker_account_id INT       NOT NULL REFERENCES public.broker_account(id),
+    feed_date         DATE      NOT NULL,
+    mv                NUMERIC   NULL,
+    positions         INT       NULL,
+    securities        INT       NULL,
+    transactions      INT       NULL,
+    tax_lots          INT       NULL,
+    last_feed         TIMESTAMP NOT NULL DEFAULT NOW(),
+    UNIQUE (broker_account_id, feed_date)
+);
+
+CREATE TABLE IF NOT EXISTS public.broker_account_hist (
+    id                SERIAL    PRIMARY KEY,
+    broker_account_id INT       NOT NULL,
+    account_id        INT       NOT NULL,
+    broker_account    TEXT      NOT NULL,
+    broker            TEXT      NOT NULL,
+    routing_code      TEXT      NULL,
+    name              TEXT      NULL,
+    setup_user_id     INT       NULL,
+    auth_expiry       DATE      NULL,
+    status            TEXT      NOT NULL,
+    updated_at        TIMESTAMP NOT NULL,
+    deleted_by        TEXT      NULL,
+    archived_at       TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.account_access (
+    id         SERIAL    PRIMARY KEY,
+    account_id INT       NOT NULL,
+    user_id    INT       NOT NULL,
+    is_default BOOLEAN   NOT NULL DEFAULT FALSE,
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_account_access_default
+    ON public.account_access (user_id)
+    WHERE is_default = TRUE;
+
+CREATE TABLE IF NOT EXISTS public.db_asset_allocation (
+    id            SERIAL       PRIMARY KEY,
+    account_id    INT          NOT NULL,
+    as_of_date    DATE         NOT NULL,
+    asset_class   VARCHAR(64)  NOT NULL,
+    market_value  FLOAT,
+    weight        FLOAT,
+    bmk_weight    FLOAT,
+    period_return FLOAT,
+    var_contrib   FLOAT,
+    updated_at    TIMESTAMP    NOT NULL DEFAULT NOW(),
+    UNIQUE (account_id, as_of_date, asset_class)
+);
+
+CREATE TABLE IF NOT EXISTS public.db_portfolio_breakdown (
+    id             SERIAL      PRIMARY KEY,
+    account_id     INT         NOT NULL,
+    as_of_date     DATE        NOT NULL,
+    breakdown_type VARCHAR(32) NOT NULL,
+    category       VARCHAR(64) NOT NULL,
+    weight         FLOAT,
+    var_contrib    FLOAT,
+    updated_at     TIMESTAMP   NOT NULL DEFAULT NOW(),
+    UNIQUE (account_id, as_of_date, breakdown_type, category)
+);
+
+CREATE TABLE IF NOT EXISTS public.account_scenario (
+    account_id  INT NOT NULL,
+    scenario_id INT NOT NULL REFERENCES public.st_scenarios(scenario_id),
+    PRIMARY KEY (account_id, scenario_id)
+);
+
+CREATE TABLE IF NOT EXISTS public.db_stress_results (
+    id          SERIAL    PRIMARY KEY,
+    account_id  INT       NOT NULL,
+    as_of_date  DATE      NOT NULL,
+    scenario_id INT       NOT NULL REFERENCES public.st_scenarios(scenario_id),
+    pnl_usd     FLOAT,
+    pnl_pct     FLOAT,
+    updated_at  TIMESTAMP NOT NULL DEFAULT NOW(),
+    UNIQUE (account_id, as_of_date, scenario_id)
+);
+
+CREATE TABLE IF NOT EXISTS public.db_risk_alerts (
+    id         SERIAL      PRIMARY KEY,
+    account_id INT         NOT NULL,
+    as_of_date DATE        NOT NULL,
+    seq        SMALLINT    NOT NULL,
+    msg        TEXT        NOT NULL,
+    level      VARCHAR(16) NOT NULL,
+    updated_at TIMESTAMP   NOT NULL DEFAULT NOW(),
+    UNIQUE (account_id, as_of_date, seq)
+);
+
+CREATE TABLE IF NOT EXISTS public.proc_asof_date (
+    as_of_date DATE      NOT NULL,
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.demo_request (
+    id          SERIAL       PRIMARY KEY,
+    first_name  VARCHAR(100) NOT NULL,
+    last_name   VARCHAR(100) NOT NULL,
+    email       VARCHAR(120) NOT NULL,
+    company     VARCHAR(100) NOT NULL,
+    aum         VARCHAR(50)  NULL,
+    interest    VARCHAR(100) NULL,
+    message     TEXT         NULL,
+    status      VARCHAR(20)  NOT NULL DEFAULT 'new',
+    create_date TIMESTAMP    NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.benchmark (
+    benchmark_id          SERIAL       PRIMARY KEY,
+    benchmark_name        VARCHAR(100) NOT NULL,
+    description           TEXT,
+    source_provider       VARCHAR(100),
+    currency              VARCHAR(10),
+    rebalancing_frequency VARCHAR(20),
+    is_custom             BOOLEAN      NOT NULL DEFAULT FALSE,
+    create_date           DATE         NOT NULL DEFAULT current_date,
+    security_id           VARCHAR(20)  NULL,
+    is_active             BOOLEAN      NOT NULL DEFAULT TRUE
+);
+
+CREATE TABLE IF NOT EXISTS public.benchmark_weights (
+    id           SERIAL       PRIMARY KEY,
+    benchmark_id INT          NOT NULL REFERENCES public.benchmark(benchmark_id) ON DELETE CASCADE,
+    asset_class  VARCHAR(50)  NOT NULL,
+    weight       NUMERIC(5,4) NOT NULL,
+    security_id  VARCHAR(20)  NULL,
+    CONSTRAINT chk_weight_range         CHECK (weight >= 0 AND weight <= 1),
+    CONSTRAINT uq_benchmark_asset_class UNIQUE (benchmark_id, asset_class)
+);
+
+CREATE TABLE IF NOT EXISTS public.account_benchmark (
+    id            SERIAL PRIMARY KEY,
+    account_id    INT    NOT NULL REFERENCES public.account(account_id),
+    benchmark_id  INT    NOT NULL REFERENCES public.benchmark(benchmark_id),
+    assigned_date DATE   NOT NULL DEFAULT current_date,
+    CONSTRAINT uq_account_benchmark UNIQUE (account_id)
+);
+
+CREATE TABLE IF NOT EXISTS public.benchmark_hist (
+    benchmark_id INT   NOT NULL REFERENCES public.benchmark(benchmark_id),
+    date         DATE  NOT NULL,
+    value        FLOAT,
+    CONSTRAINT uq_benchmark_hist UNIQUE (benchmark_id, date)
+);
+
+CREATE TABLE IF NOT EXISTS public.beta_definition (
+    beta_key       VARCHAR(50)  PRIMARY KEY,
+    benchmark_id   VARCHAR(20)  NOT NULL,
+    benchmark_name VARCHAR(100) NOT NULL,
+    lookback_days  INT          NOT NULL DEFAULT 252,
+    return_type    VARCHAR(10)  NOT NULL DEFAULT 'SIMPLE',
+    min_obs        INT          NOT NULL DEFAULT 100,
+    description    TEXT
+);
+
+CREATE TABLE IF NOT EXISTS public.sec_beta (
+    security_id  VARCHAR(20) NOT NULL,
+    beta_key     VARCHAR(50) NOT NULL REFERENCES public.beta_definition(beta_key),
+    benchmark_id VARCHAR(20) NOT NULL,
+    beta         FLOAT,
+    r_squared    FLOAT,
+    vol          FLOAT,
+    obs_count    INT,
+    start_date   DATE,
+    end_date     DATE,
+    calc_date    DATE,
+    PRIMARY KEY (security_id, beta_key)
+);
+
+CREATE TABLE IF NOT EXISTS public.illiquid_model_parameters (
+    security_id    VARCHAR(20) PRIMARY KEY,
+    category       VARCHAR(50) NULL,
+    historical_vol NUMERIC     NULL,
+    liquidity_adj  NUMERIC     NULL,
+    correlation    NUMERIC     NULL,
+    beta           NUMERIC     NULL,
+    sigma          NUMERIC     NULL
+);
+
+CREATE TABLE IF NOT EXISTS public.sn_replica (
+    security_id           VARCHAR(20) NOT NULL,
+    position_id           VARCHAR(20) NOT NULL,
+    security_type         VARCHAR(50) NOT NULL,
+    note_notional         NUMERIC     NOT NULL,
+    notional              NUMERIC     NOT NULL,
+    quantity              NUMERIC     NOT NULL,
+    maturity              DATE        NOT NULL,
+    coupon_rate           NUMERIC     NULL,
+    trigger_level         NUMERIC     NULL,
+    strike                NUMERIC     NULL,
+    underlying            VARCHAR(20) NOT NULL,
+    underlying_sec_id     VARCHAR(20) NOT NULL,
+    init_underlying_price NUMERIC     NULL,
+    init_price_date       DATE        NULL,
+    PRIMARY KEY (security_id, position_id)
+);
+
+CREATE TABLE IF NOT EXISTS public.sn_replica_calc (
+    id               SERIAL      PRIMARY KEY,
+    security_id      VARCHAR(20) NOT NULL,
+    as_of_date       DATE        NOT NULL,
+    position_id      VARCHAR(20) NOT NULL,
+    underlying_price NUMERIC     NULL,
+    tenor            NUMERIC     NULL,
+    risk_free_rate   NUMERIC     NULL,
+    iv               NUMERIC     NULL,
+    value            NUMERIC     NULL,
+    delta            NUMERIC     NULL,
+    gamma            NUMERIC     NULL,
+    UNIQUE (security_id, as_of_date, position_id)
+);
+
+CREATE TABLE IF NOT EXISTS public.slide_shocks (
+    id         SERIAL      PRIMARY KEY,
+    slide_name VARCHAR(50) NOT NULL,
+    shock      NUMERIC     NOT NULL,
+    UNIQUE (slide_name, shock)
+);
