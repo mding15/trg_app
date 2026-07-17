@@ -1,7 +1,7 @@
 """
 run_equity_model.py — Run the equity model pipeline.
 
-Reads the Securities tab from Excel/EquityModel.xlsx, fetches historical prices
+Reads the Securities tab from data/maintenance/Excel/EquityModel.xlsx, fetches historical prices
 from the HDF market data store via utils.mkt_data.get_market_data(), and calls
 models.equity_model.run_model().
 
@@ -31,7 +31,9 @@ import openpyxl
 
 SCRIPT_DIR    = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR.parent))  # trg_app/ — required for models.equity_model imports
-WORKBOOK_PATH = SCRIPT_DIR / 'Excel' / 'EquityModel.xlsx'
+
+from _paths import EXCEL_DIR
+WORKBOOK_PATH = EXCEL_DIR / 'EquityModel.xlsx'
 
 
 # ── logging ────────────────────────────────────────────────────────────────────

@@ -10,7 +10,7 @@ Sheets written (in order):
 Each sheet is capped at 1000 rows.
 
 Output:
-    maintenance/Excel/dump_feed_{feed_date}.xlsx
+    data/maintenance/Excel/dump_feed_{feed_date}.xlsx
 
 Usage:
     python maintenance/dump_feed.py --date 2026-03-02
@@ -27,8 +27,8 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from database2 import pg_connection
+from _paths import EXCEL_DIR
 
-EXCEL_DIR = Path(__file__).resolve().parent / "Excel"
 ROW_LIMIT = 1000
 
 TABLES = ["mssb_posit", "mssb_secty", "mssb_taxlot", "mssb_trans", "mssb_price"]

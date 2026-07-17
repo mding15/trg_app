@@ -2,7 +2,7 @@
 dump_table.py — Dump a PostgreSQL table to a CSV file.
 
 Fetches all columns from the target table and writes them to a timestamped
-CSV file in maintenance/CSV/.  Use --limit to cap the number of rows
+CSV file in data/maintenance/CSV/.  Use --limit to cap the number of rows
 (default: 1000) or --all to dump the entire table.
 
 Usage:
@@ -31,8 +31,7 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from database2 import pg_connection
-
-CSV_DIR = Path(__file__).resolve().parent / "CSV"
+from _paths import CSV_DIR
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────

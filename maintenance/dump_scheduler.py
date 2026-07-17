@@ -10,7 +10,7 @@ Sheets written (in order):
 Each sheet is capped at 1000 rows.
 
 Output:
-    maintenance/Excel/dump_scheduler_{run_date}.xlsx
+    data/maintenance/Excel/dump_scheduler_{run_date}.xlsx
 
 Usage:
     python maintenance/dump_scheduler.py --date 2026-04-28
@@ -28,8 +28,8 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from database2 import pg_connection
+from _paths import EXCEL_DIR
 
-EXCEL_DIR = Path(__file__).resolve().parent / "Excel"
 ROW_LIMIT = 1000
 STDOUT_STDERR_LIMIT = 1000
 

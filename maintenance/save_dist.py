@@ -1,7 +1,7 @@
 """
 save_dist.py — Save a return distribution CSV into the VaR HDF store.
 
-Reads a distribution CSV from maintenance/CSV/, sets the target model, and
+Reads a distribution CSV from data/maintenance/CSV/, sets the target model, and
 calls var_utils.save_dist() to write it into the model's .h5 file.
 
 Usage:
@@ -10,7 +10,7 @@ Usage:
     python save_dist.py dist.csv --model M_20251231 --category PRICE
 
 Arguments:
-    file        CSV filename inside maintenance/CSV/   (required)
+    file        CSV filename inside data/maintenance/CSV/   (required)
 
 Options:
     --model     Model ID to write to, e.g. M_20251231  (default: default model)
@@ -27,8 +27,7 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from utils import var_utils
-
-CSV_DIR = Path(__file__).resolve().parent / "CSV"
+from _paths import CSV_DIR
 
 
 def _setup_logger() -> logging.Logger:
@@ -76,7 +75,7 @@ def main() -> None:
         ),
     )
     parser.add_argument("file",       metavar="FILE",
-                        help="CSV filename inside maintenance/CSV/")
+                        help="CSV filename inside data/maintenance/CSV/")
     parser.add_argument("--model",    default=None, metavar="MODEL_ID",
                         help="Model ID to write to (default: default model)")
     parser.add_argument("--category", default="PRICE", metavar="CATEGORY",

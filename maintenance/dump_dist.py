@@ -2,17 +2,17 @@
 dump_dist.py — Dump security PnL distributions from the VaR HDF store to CSV.
 
 Reads a list of security IDs from a CSV file, fetches their distributions via
-var_utils.get_dist(), and writes the result to maintenance/CSV/dist.{category}.csv.
+var_utils.get_dist(), and writes the result to data/maintenance/CSV/dist.{category}.csv.
 
 Usage:
     python dump_dist.py
     python dump_dist.py --category IR
-    python dump_dist.py --input maintenance/CSV/security_ids.csv --category SPREAD
+    python dump_dist.py --input data/maintenance/CSV/security_ids.csv --category SPREAD
     python dump_dist.py --dry-run
     python dump_dist.py --list
 
 Options:
-    --input     Path to CSV with security IDs (default: maintenance/CSV/security_ids.csv)
+    --input     Path to CSV with security IDs (default: data/maintenance/CSV/security_ids.csv)
     --category  HDF distribution category     (default: PRICE)
     --dry-run   Show shape and coverage without writing the file
     --list      Dump all (Category, SecurityID) entries in the HDF to dist.list.csv
@@ -28,8 +28,8 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from utils import var_utils
+from _paths import CSV_DIR
 
-CSV_DIR = Path(__file__).resolve().parent / "CSV"
 DEFAULT_INPUT = CSV_DIR / "security_ids.csv"
 
 
@@ -130,7 +130,7 @@ def main() -> None:
             "Examples:\n"
             "  python dump_dist.py\n"
             "  python dump_dist.py --category IR\n"
-            "  python dump_dist.py --input maintenance/CSV/my_ids.csv --category SPREAD\n"
+            "  python dump_dist.py --input data/maintenance/CSV/my_ids.csv --category SPREAD\n"
             "  python dump_dist.py --dry-run\n"
             "  python dump_dist.py --list\n"
         ),

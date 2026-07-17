@@ -22,7 +22,7 @@ Parent account handling:
     (parent-level data is already aggregated there).
 
 Output:
-    maintenance/Excel/dump_{account_id}_{as_of_date}.xlsx
+    data/maintenance/Excel/dump_{account_id}_{as_of_date}.xlsx
 
 Usage:
     python maintenance/dump_account.py --account-id 1003 --date 2026-03-02
@@ -39,8 +39,8 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from database2 import pg_connection, get_proc_asof_date
+from _paths import EXCEL_DIR
 
-EXCEL_DIR = Path(__file__).resolve().parent / "Excel"
 ROW_LIMIT = 1000
 
 

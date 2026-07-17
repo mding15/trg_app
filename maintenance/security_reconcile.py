@@ -1,6 +1,20 @@
 """
 security_reconcile.py — Reconcile ISIN or CUSIP identifiers via OpenFIGI;
-upsert results into security_lookup or save to CSV.
+upsert results into figi_lookup or save to CSV.
+
+Finds securities in security_xref that don't yet have a matching isin/cusip row
+in figi_lookup, looks each one up via OpenFIGI, and either:
+  - upserts the result into figi_lookup                                  (default)
+  - writes the resolved rows to a CSV instead of the DB                  (--csv)
+  - compares the resolved rows against the existing figi_lookup row (by
+    security_id) and writes a CSV categorized as identical / different / new,
+    without writing anything to the DB                                   (--compare)
+
+CUSIP mode first derives a synthetic US ISIN via a Luhn mod-10 check digit
+(cusip_to_isin()), since OpenFIGI's mapping endpoint prefers ISIN lookups;
+non-alphanumeric CUSIPs are skipped. Multi-venue OpenFIGI results are reduced
+to one representative row per security via pick_representative() (home-exchange
+priority, see figi_utils.HOME_EXCH).
 
 Usage:
     python security_reconcile.py --mode isin
@@ -14,8 +28,8 @@ Usage:
     python security_reconcile.py --mode isin  --test US0378331005
     python security_reconcile.py --mode cusip --test 037833100
 
-Requires a unique index on security_lookup(figi):
-    CREATE UNIQUE INDEX IF NOT EXISTS uix_security_lookup_figi ON security_lookup(figi);
+Requires a unique index on figi_lookup(figi):
+    CREATE UNIQUE INDEX IF NOT EXISTS uix_figi_lookup_figi ON figi_lookup(figi);
 """
 from __future__ import annotations
 
@@ -34,9 +48,8 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from database2 import pg_connection
-from figi_utils import FIGI_COLUMNS, OPENFIGI_BATCH, fetch, pick_representative
-
-CSV_DIR = Path(__file__).parent / "CSV"
+from figi_utils import FIGI_COLUMNS, OPENFIGI_BATCH, fetch, pick_representative, FIGI_LOOKUP_UPSERT_SQL as _UPSERT_SQL
+from _paths import CSV_DIR
 
 CSV_FIELDS = [
     "security_id", "ISIN", "CUSIP", "ticker", "figi", "compositeFIGI",
@@ -44,13 +57,13 @@ CSV_FIELDS = [
     "marketSector", "securityDescription",
 ]
 
-# Fields compared against the DB (securityDescription is not stored in security_lookup)
+# Fields compared against the DB (securityDescription is not stored in figi_lookup)
 COMPARE_FIELDS = [
     "ISIN", "CUSIP", "ticker", "figi", "compositeFIGI", "shareClassFIGI",
     "name", "exchCode", "securityType", "securityType2", "marketSector",
 ]
 
-# Maps security_lookup column names back to the canonical keys used in _build_row
+# Maps figi_lookup column names back to the canonical keys used in _build_row
 _DB_TO_CANONICAL: dict[str, str] = {
     "isin":            "ISIN",
     "cusip":           "CUSIP",
@@ -116,7 +129,7 @@ def cusip_to_isin(cusip: str, country_code: str = "US") -> str:
 
 def _fetch_records(ref_type: str, limit: int | None) -> list[tuple[str, str]]:
     """Return (security_id, ref_id) tuples from security_xref, excluding
-    identifiers already reconciled in security_lookup (matched independently
+    identifiers already reconciled in figi_lookup (matched independently
     by isin or cusip column, not by security_id)."""
     sl_col = "isin" if ref_type == "ISIN" else "cusip"
     sql = f"""
@@ -124,7 +137,7 @@ def _fetch_records(ref_type: str, limit: int | None) -> list[tuple[str, str]]:
         FROM security_xref
         WHERE "REF_TYPE" = '{ref_type}'
         AND NOT EXISTS (
-            SELECT 1 FROM security_lookup
+            SELECT 1 FROM figi_lookup
             WHERE {sl_col} = security_xref."REF_ID"
         )
     """
@@ -134,32 +147,6 @@ def _fetch_records(ref_type: str, limit: int | None) -> list[tuple[str, str]]:
         with conn.cursor() as cur:
             cur.execute(sql)
             return [(str(row[0]), str(row[1])) for row in cur.fetchall()]
-
-
-_UPSERT_SQL = """
-    INSERT INTO security_lookup
-        (security_id, name, ticker, exch, isin, cusip, sedol,
-         figi, comp_figi, shareclass_figi,
-         sectype, sectype2, mkt_sector, update_at)
-    VALUES
-        (%(security_id)s, %(name)s, %(ticker)s, %(exch)s, %(isin)s, %(cusip)s, %(sedol)s,
-         %(figi)s, %(comp_figi)s, %(shareclass_figi)s,
-         %(sectype)s, %(sectype2)s, %(mkt_sector)s, NOW())
-    ON CONFLICT (figi) DO UPDATE SET
-        security_id     = COALESCE(NULLIF(EXCLUDED.security_id, ''), security_lookup.security_id),
-        name            = COALESCE(NULLIF(EXCLUDED.name,        ''), security_lookup.name),
-        ticker          = COALESCE(NULLIF(EXCLUDED.ticker,      ''), security_lookup.ticker),
-        exch            = COALESCE(NULLIF(EXCLUDED.exch,        ''), security_lookup.exch),
-        isin            = COALESCE(NULLIF(EXCLUDED.isin,        ''), security_lookup.isin),
-        cusip           = COALESCE(NULLIF(EXCLUDED.cusip,       ''), security_lookup.cusip),
-        sedol           = COALESCE(NULLIF(EXCLUDED.sedol,       ''), security_lookup.sedol),
-        comp_figi       = EXCLUDED.comp_figi,
-        shareclass_figi = EXCLUDED.shareclass_figi,
-        sectype         = COALESCE(NULLIF(EXCLUDED.sectype,     ''), security_lookup.sectype),
-        sectype2        = COALESCE(NULLIF(EXCLUDED.sectype2,    ''), security_lookup.sectype2),
-        mkt_sector      = COALESCE(NULLIF(EXCLUDED.mkt_sector,  ''), security_lookup.mkt_sector),
-        update_at       = NOW()
-"""
 
 
 def _trunc(value, max_len: int) -> str:
@@ -190,7 +177,7 @@ def _build_row(security_id: str, row: pd.Series, cusip: str = "") -> dict:
 
 
 def _to_db_dict(r: dict) -> dict:
-    """Remap canonical row keys to security_lookup column names for upsert."""
+    """Remap canonical row keys to figi_lookup column names for upsert."""
     return {
         "security_id":     r["security_id"],
         "name":            r["name"],
@@ -220,14 +207,14 @@ def _upsert_rows(rows: list[dict]) -> int:
 
 
 def _fetch_existing(security_ids: list[str]) -> dict[str, dict]:
-    """Return {security_id: canonical_row} for rows already in security_lookup."""
+    """Return {security_id: canonical_row} for rows already in figi_lookup."""
     if not security_ids:
         return {}
     placeholders = ",".join(["%s"] * len(security_ids))
     sql = f"""
         SELECT security_id, name, ticker, exch, isin, cusip,
                figi, comp_figi, shareclass_figi, sectype, sectype2, mkt_sector
-        FROM security_lookup
+        FROM figi_lookup
         WHERE security_id IN ({placeholders})
     """
     with pg_connection() as conn:
@@ -248,12 +235,12 @@ def _fetch_existing(security_ids: list[str]) -> dict[str, dict]:
 
 def _compare_and_write(rows: list[dict], mode: str, log: logging.Logger) -> Path:
     """
-    Compare new OpenFIGI rows against existing security_lookup rows (by security_id).
+    Compare new OpenFIGI rows against existing figi_lookup rows (by security_id).
     Writes a CSV sorted by: different → new → identical.
     db_* columns are populated only for 'different' rows.
     """
     security_ids = [r["security_id"] for r in rows if r["security_id"]]
-    log.info(f"  Fetching existing rows from security_lookup for {len(security_ids)} security_id(s) …")
+    log.info(f"  Fetching existing rows from figi_lookup for {len(security_ids)} security_id(s) …")
     existing = _fetch_existing(security_ids)
     log.info(f"  {len(existing)} match(es) found in DB")
 
@@ -470,7 +457,7 @@ def main() -> None:
     output_group.add_argument(
         "--compare", action="store_true",
         help=(
-            "Compare OpenFIGI results against existing security_lookup rows (by security_id) "
+            "Compare OpenFIGI results against existing figi_lookup rows (by security_id) "
             "and write a comparison CSV showing identical / different / new rows"
         ),
     )

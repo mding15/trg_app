@@ -4,7 +4,7 @@ maintenance/check_invalid_xref.py
 Find all invalid ISIN and CUSIP values in security_xref and report
 the corresponding security_info rows.
 
-Output is printed to console and saved to CSV/invalid_xref_<date>.csv.
+Output is printed to console and saved to data/maintenance/CSV/invalid_xref_<date>.csv.
 
 Usage:
   python check_invalid_xref.py
@@ -18,6 +18,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 
 from database import db_utils
 from utils.security_util import cusip_is_valid, isin_is_valid
+from _paths import CSV_DIR
 
 VALIDATORS = {
     'ISIN':  isin_is_valid,
@@ -98,9 +99,8 @@ def main():
         print(group[['REF_ID', 'SecurityID', 'SecurityName', 'AssetClass']].to_string(index=False))
         print()
 
-    out_dir  = os.path.join(os.path.dirname(__file__), 'CSV')
-    os.makedirs(out_dir, exist_ok=True)
-    out_file = os.path.join(out_dir, f'invalid_xref_{date.today().strftime("%Y%m%d")}.csv')
+    os.makedirs(CSV_DIR, exist_ok=True)
+    out_file = os.path.join(CSV_DIR, f'invalid_xref_{date.today().strftime("%Y%m%d")}.csv')
     report.to_csv(out_file, index=False)
     print(f'Saved: {out_file}')
 

@@ -6,7 +6,7 @@ For each category in the mkt_data security list (excluding TEST):
   - Calculates statistics via utils.stat_utils.hist_stat()
   - Writes one Excel tab per category
 
-Output: maintenance/Excel/mkt_data_info_<YYYYMMDD_HHMMSS>.xlsx
+Output: data/maintenance/Excel/mkt_data_info_<YYYYMMDD_HHMMSS>.xlsx
 
 Usage:
     python maintenance/dump_mkt_data_info.py
@@ -31,8 +31,8 @@ app.app_context().push()
 
 from mkt_data import mkt_timeseries
 from utils.stat_utils import hist_stat
+from _paths import EXCEL_DIR
 
-EXCEL_DIR  = SCRIPT_DIR / 'Excel'
 BATCH_SIZE = 50
 
 

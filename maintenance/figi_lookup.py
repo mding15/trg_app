@@ -9,7 +9,7 @@ Usage:
     python figi_lookup.py --figi BBG000B9XRY4
     python figi_lookup.py          # prompts for lookup type and value
 
-All raw rows returned from the API are saved to CSV/figi_lookup.csv.
+All raw rows returned from the API are saved to data/maintenance/CSV/figi_lookup.csv.
 One representative instrument is printed to console (home exchange preferred).
 """
 
@@ -24,11 +24,11 @@ from pathlib import Path
 import pandas as pd
 
 from figi_utils import FIGI_COLUMNS, pick_representative
+from _paths import CSV_DIR
 
 OPENFIGI_API_KEY  = '9a5b92a9-cae1-47ad-bb52-9d6293d18364'
 OPENFIGI_BASE_URL = "https://api.openfigi.com"
 
-CSV_DIR      = Path(__file__).parent / "CSV"
 RAW_CSV_PATH = CSV_DIR / "figi_lookup.csv"
 
 RAW_CSV_FIELDS = [

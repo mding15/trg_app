@@ -1,7 +1,7 @@
 """
 upload_excel.py — Upload an Excel sheet to a PostgreSQL table.
 
-Reads a named sheet from an Excel file in maintenance/Excel/, matches its
+Reads a named sheet from an Excel file in data/maintenance/Excel/, matches its
 columns to the target DB table, and inserts rows one by one.  Bad rows are
 skipped and logged; the remaining rows continue to be inserted.
 
@@ -14,7 +14,7 @@ Arguments:
     table       Target database table name                (required, positional)
 
 Options:
-    --file      Excel filename inside maintenance/Excel/  (default: <table>.xlsx)
+    --file      Excel filename inside data/maintenance/Excel/  (default: <table>.xlsx)
     --sheet     Sheet name to read                        (default: <table>)
     --dry-run   Preview rows and column mapping without writing to DB
 """
@@ -30,8 +30,7 @@ import psycopg2.sql as pgsql
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from database2 import pg_connection
-
-EXCEL_DIR = Path(__file__).resolve().parent / "Excel"
+from _paths import EXCEL_DIR
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -204,7 +203,7 @@ def main() -> None:
     parser.add_argument("table",     metavar="TABLE",
                         help="Target database table name")
     parser.add_argument("--file",    default=None, metavar="FILENAME",
-                        help="Excel filename inside maintenance/Excel/ (default: <table>.xlsx)")
+                        help="Excel filename inside data/maintenance/Excel/ (default: <table>.xlsx)")
     parser.add_argument("--sheet",   default=None, metavar="SHEET",
                         help="Sheet name to read (default: <table>)")
     parser.add_argument("--dry-run", action="store_true",

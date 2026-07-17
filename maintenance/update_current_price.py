@@ -40,8 +40,8 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from database2 import pg_connection
+from _paths import CSV_DIR
 
-CSV_DIR = Path(__file__).resolve().parent / "CSV"
 DEFAULT_CSV = CSV_DIR / "ticker.csv"
 
 # yh_stock_price column → current_price column

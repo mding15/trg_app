@@ -2,7 +2,7 @@
 dump_current_price.py — Dump the current_price table for a given as-of date.
 
 Fetches all rows from current_price where "Date" matches the given date and
-writes them to a timestamped CSV file in maintenance/CSV/.
+writes them to a timestamped CSV file in data/maintenance/CSV/.
 
 Usage:
     python dump_current_price.py                        # defaults to today
@@ -25,8 +25,7 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from database2 import pg_connection, get_proc_asof_date
-
-CSV_DIR = Path(__file__).resolve().parent / "CSV"
+from _paths import CSV_DIR
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────

@@ -1,7 +1,7 @@
 """
 update_table.py — Update rows in a PostgreSQL table from an Excel sheet.
 
-Reads a named sheet from an Excel file in maintenance/Excel/, matches its
+Reads a named sheet from an Excel file in data/maintenance/Excel/, matches its
 columns to the target DB table, and issues UPDATE statements row by row.
 Columns listed via --key are used in the WHERE clause; all other matched
 columns go into the SET clause.  Rows whose key is not found in the DB are
@@ -21,7 +21,7 @@ Options:
                 e.g. --key SecurityID  or  --key SecurityID:Date
                 If omitted, the key is looked up in TABLE_KEYS. If the table is
                 not listed there, the script exits with an error.
-    --file      Excel filename inside maintenance/Excel/  (default: <table>.xlsx)
+    --file      Excel filename inside data/maintenance/Excel/  (default: <table>.xlsx)
     --sheet     Sheet name to read                        (default: <table>)
     --dry-run   Preview rows and column mapping without writing to DB
 """
@@ -37,8 +37,7 @@ import psycopg2.sql as pgsql
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from database2 import pg_connection
-
-EXCEL_DIR = Path(__file__).resolve().parent / "Excel"
+from _paths import EXCEL_DIR
 
 # Tables whose key can be omitted from --key; colon-separated composite keys
 # are stored as lists.  Add more entries here as needed.
@@ -268,7 +267,7 @@ def main() -> None:
     parser.add_argument("--key",     default=None, metavar="COL[:COL...]",
                         help="Key column(s) for the WHERE clause, colon-separated (e.g. SecurityID or SecurityID:Date). If omitted, looked up in TABLE_KEYS; error if not listed.")
     parser.add_argument("--file",    default=None, metavar="FILENAME",
-                        help="Excel filename inside maintenance/Excel/ (default: <table>.xlsx)")
+                        help="Excel filename inside data/maintenance/Excel/ (default: <table>.xlsx)")
     parser.add_argument("--sheet",   default=None, metavar="SHEET",
                         help="Sheet name to read (default: <table>)")
     parser.add_argument("--dry-run", action="store_true",

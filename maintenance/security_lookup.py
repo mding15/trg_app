@@ -12,7 +12,7 @@ Usage:
     python security_lookup.py --dry-run
 
 Options:
-    --file          Path to the Excel workbook         (default: Excel/security_lookup.xlsx)
+    --file          Path to the Excel workbook         (default: data/maintenance/Excel/security_lookup.xlsx)
     --input-sheet   Sheet name to read positions from  (default: Positions)
     --output-sheet  Sheet name to write results to     (default: SecurityID)
     --dry-run       Print resolved/unresolved counts without writing the output sheet
@@ -28,7 +28,9 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-DEFAULT_XLSX = Path(__file__).resolve().parent / "Excel" / "security_lookup.xlsx"
+from _paths import EXCEL_DIR
+
+DEFAULT_XLSX = EXCEL_DIR / "security_lookup.xlsx"
 
 from database2 import pg_connection
 from process2.security_lookup import lookup_security_ids
@@ -48,21 +50,21 @@ def _setup_logger() -> logging.Logger:
 
 
 def _fetch_xref_ids(sec_ids: list[str]) -> pd.DataFrame:
-    """Return DB_ISIN and DB_CUSIP from security_xref for the given SecurityIDs.
+    """Return DB_ISIN, DB_CUSIP, and DB_Ticker from security_xref for the given SecurityIDs.
     Multiple values per SecurityID are joined comma-separated."""
     if not sec_ids:
-        return pd.DataFrame(columns=['SecurityID', 'DB_ISIN', 'DB_CUSIP'])
+        return pd.DataFrame(columns=['SecurityID', 'DB_ISIN', 'DB_CUSIP', 'DB_Ticker'])
     with pg_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 'SELECT "SecurityID", "REF_TYPE", "REF_ID"'
                 ' FROM security_xref WHERE "SecurityID" = ANY(%s)'
-                ' AND "REF_TYPE" IN (\'ISIN\', \'CUSIP\')',
+                ' AND "REF_TYPE" IN (\'ISIN\', \'CUSIP\', \'Ticker\')',
                 (sec_ids,),
             )
             rows = cur.fetchall()
     if not rows:
-        return pd.DataFrame(columns=['SecurityID', 'DB_ISIN', 'DB_CUSIP'])
+        return pd.DataFrame(columns=['SecurityID', 'DB_ISIN', 'DB_CUSIP', 'DB_Ticker'])
     df = pd.DataFrame(rows, columns=['SecurityID', 'REF_TYPE', 'REF_ID'])
     pivot = (
         df.groupby(['SecurityID', 'REF_TYPE'])['REF_ID']
@@ -70,17 +72,17 @@ def _fetch_xref_ids(sec_ids: list[str]) -> pd.DataFrame:
         .unstack(fill_value=None)
         .reset_index()
     )
-    pivot = pivot.rename(columns={'ISIN': 'DB_ISIN', 'CUSIP': 'DB_CUSIP'})
-    for col in ('DB_ISIN', 'DB_CUSIP'):
+    pivot = pivot.rename(columns={'ISIN': 'DB_ISIN', 'CUSIP': 'DB_CUSIP', 'Ticker': 'DB_Ticker'})
+    for col in ('DB_ISIN', 'DB_CUSIP', 'DB_Ticker'):
         if col not in pivot.columns:
             pivot[col] = None
-    return pivot[['SecurityID', 'DB_ISIN', 'DB_CUSIP']]
+    return pivot[['SecurityID', 'DB_ISIN', 'DB_CUSIP', 'DB_Ticker']]
 
 
 def _fetch_security_info(sec_ids: list[str]) -> pd.DataFrame:
-    """Return SecurityName, AssetClass, AssetType from security_info for the given SecurityIDs."""
+    """Return DB_SecurityName, AssetClass, AssetType from security_info for the given SecurityIDs."""
     if not sec_ids:
-        return pd.DataFrame(columns=['SecurityID', 'SecurityName', 'AssetClass', 'AssetType'])
+        return pd.DataFrame(columns=['SecurityID', 'DB_SecurityName', 'AssetClass', 'AssetType'])
     with pg_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -89,7 +91,7 @@ def _fetch_security_info(sec_ids: list[str]) -> pd.DataFrame:
                 (sec_ids,),
             )
             rows = cur.fetchall()
-    return pd.DataFrame(rows, columns=['SecurityID', 'SecurityName', 'AssetClass', 'AssetType'])
+    return pd.DataFrame(rows, columns=['SecurityID', 'DB_SecurityName', 'AssetClass', 'AssetType'])
 
 
 # ── Core logic ────────────────────────────────────────────────────────────────
@@ -114,6 +116,14 @@ def run(xlsx_path: Path, input_sheet: str, output_sheet: str, dry_run: bool) -> 
         df = df.rename(columns={'Cusip': 'CUSIP'})
         log.info("  Renamed column 'Cusip' → 'CUSIP'")
 
+    if 'CUSIP' in df.columns:
+        prefix = 'CUSIP:'
+        is_prefixed = df['CUSIP'].apply(lambda v: isinstance(v, str) and v.startswith(prefix))
+        n_prefixed = int(is_prefixed.sum())
+        if n_prefixed:
+            df.loc[is_prefixed, 'CUSIP'] = df.loc[is_prefixed, 'CUSIP'].str[len(prefix):].str.strip()
+            log.info(f"  Stripped '{prefix}' prefix from {n_prefixed} CUSIP value(s)")
+
     log.info("Looking up SecurityIDs …")
     result = lookup_security_ids(df)
 
@@ -125,11 +135,11 @@ def run(xlsx_path: Path, input_sheet: str, output_sheet: str, dry_run: bool) -> 
 
     sec_ids = result['SecurityID'].dropna().unique().tolist()
 
-    log.info("Fetching SecurityName, AssetClass, AssetType …")
+    log.info("Fetching DB_SecurityName, AssetClass, AssetType …")
     sec_info = _fetch_security_info(sec_ids)
     result = result.merge(sec_info, on='SecurityID', how='left')
 
-    log.info("Fetching DB_ISIN, DB_CUSIP from security_xref …")
+    log.info("Fetching DB_ISIN, DB_CUSIP, DB_Ticker from security_xref …")
     xref_ids = _fetch_xref_ids(sec_ids)
     result = result.merge(xref_ids, on='SecurityID', how='left')
     log.info("─" * 60)
@@ -165,7 +175,7 @@ def main() -> None:
     )
     parser.add_argument("--file", dest="xlsx_path", default=str(DEFAULT_XLSX),
                         metavar="XLSX_PATH",
-                        help="Path to the Excel workbook (default: Excel/security_lookup.xlsx)")
+                        help="Path to the Excel workbook (default: data/maintenance/Excel/security_lookup.xlsx)")
     parser.add_argument("--input-sheet", default="Positions", metavar="SHEET",
                         help="Sheet name to read positions from (default: Positions)")
     parser.add_argument("--output-sheet", default="SecurityID", metavar="SHEET",

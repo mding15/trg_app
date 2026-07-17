@@ -1,12 +1,12 @@
 """
 maintenance/import_security_xref.py
 
-Insert or update rows in security_xref from maintenance/Excel/security_xref.xlsx.
+Insert or update rows in security_xref from data/maintenance/Excel/security_xref.xlsx.
 
 - Sheet: security_xref
-- Identifier columns (ISIN, CUSIP, Ticker, YH, YF_ID, BB_UNIQUE, BB_GLOBAL) are
+- Identifier columns (ISIN, CUSIP, Ticker, YH, YF_ID, BB_UNIQUE, BB_GLOBAL, SEDOL) are
   unpivoted into (REF_TYPE, REF_ID) rows.
-- CUSIP_ prefix is stripped before inserting.
+- "CUSIP:" prefix is stripped before inserting.
 - Existing (REF_ID, REF_TYPE) rows are updated; only non-null Excel fields are written.
 - New rows are inserted; DateAdded defaults to today.
 
@@ -21,10 +21,11 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 
 import pandas as pd
 from database import pg_connection
+from _paths import EXCEL_DIR
 
-EXCEL_PATH = os.path.join(os.path.dirname(__file__), 'Excel', 'security_xref.xlsx')
+EXCEL_PATH = os.path.join(EXCEL_DIR, 'security_xref.xlsx')
 SHEET_NAME = 'security_xref'
-ID_COLUMNS = ['ISIN', 'CUSIP', 'Ticker', 'YH', 'YF_ID', 'BB_UNIQUE', 'BB_GLOBAL']
+ID_COLUMNS = ['ISIN', 'CUSIP', 'Ticker', 'YH', 'YF_ID', 'BB_UNIQUE', 'BB_GLOBAL', 'SEDOL']
 
 
 def load_excel():
@@ -46,8 +47,8 @@ def unpivot(df):
 
 
 def strip_cusip_prefix(df):
-    mask = (df['REF_TYPE'] == 'CUSIP') & df['REF_ID'].str.startswith('CUSIP_')
-    df.loc[mask, 'REF_ID'] = df.loc[mask, 'REF_ID'].str.removeprefix('CUSIP_')
+    mask = (df['REF_TYPE'] == 'CUSIP') & df['REF_ID'].str.startswith('CUSIP:')
+    df.loc[mask, 'REF_ID'] = df.loc[mask, 'REF_ID'].str.removeprefix('CUSIP:')
     return df
 
 
@@ -130,9 +131,14 @@ def main():
     upd_rows = data[~is_new].copy()
 
     exist_id_map = existing.set_index(['REF_ID', 'REF_TYPE'])['id'].to_dict()
-    upd_rows['id'] = upd_rows.apply(
-        lambda r: exist_id_map[(r['REF_ID'], r['REF_TYPE'])], axis=1
-    )
+    if upd_rows.empty:
+        # DataFrame.apply(axis=1) on an empty frame returns the frame itself
+        # (not a Series), since pandas has no row to infer the result shape from.
+        upd_rows['id'] = pd.Series(dtype=object)
+    else:
+        upd_rows['id'] = upd_rows.apply(
+            lambda r: exist_id_map[(r['REF_ID'], r['REF_TYPE'])], axis=1
+        )
 
     inserted = do_inserts(new_rows)
     updated  = do_updates(upd_rows)

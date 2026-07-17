@@ -15,7 +15,7 @@ hist, eod, and update accept mutually exclusive input (default: CSV/ticker.csv):
 
 profile requires tickers as a positional arg or --file (CSV with 'ticker' column).
 
-Output files (maintenance/CSV/):
+Output files (data/maintenance/CSV/):
     hist_price_YYYYMMDD_HHMMSS.csv
     hist_dividend_YYYYMMDD_HHMMSS.csv
     eod_price_YYYYMMDD_HHMMSS.csv
@@ -50,8 +50,7 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from detl.yh_extract import api_hist_price, api_eod_price, api_stock_profiles
 from mkt_data.mkt_data_extract import extract_yh_price, get_yh_source_id
-
-CSV_DIR = Path(__file__).resolve().parent / "CSV"
+from _paths import CSV_DIR
 
 
 # ── Logging ───────────────────────────────────────────────────────────────────

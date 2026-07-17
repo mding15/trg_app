@@ -2,14 +2,15 @@
 Shared OpenFIGI utilities used by security_lookup.py and isin_lookup.py.
 
 Exports:
-    OPENFIGI_API_KEY    — API key for OpenFIGI
-    OPENFIGI_URL        — OpenFIGI /v3/mapping endpoint
-    OPENFIGI_BATCH      — max identifiers per batch request
-    HOME_EXCH           — ISIN country prefix -> preferred exchange codes
-    FIGI_COLUMNS        — canonical column order for OpenFIGI result DataFrames
-    fetch               — call OpenFIGI /v3/mapping for a list of identifiers
-    pick_representative — reduce a long FIGI DataFrame to one row per ISIN
-    test                — read ISINs/CUSIPs from Excel, fetch FIGIs, write Results sheet
+    OPENFIGI_API_KEY        — API key for OpenFIGI
+    OPENFIGI_URL            — OpenFIGI /v3/mapping endpoint
+    OPENFIGI_BATCH          — max identifiers per batch request
+    HOME_EXCH               — ISIN country prefix -> preferred exchange codes
+    FIGI_COLUMNS            — canonical column order for OpenFIGI result DataFrames
+    FIGI_LOOKUP_UPSERT_SQL  — shared upsert statement for the figi_lookup table
+    fetch                   — call OpenFIGI /v3/mapping for a list of identifiers
+    pick_representative     — reduce a long FIGI DataFrame to one row per ISIN
+    test                    — read ISINs/CUSIPs from Excel, fetch FIGIs, write Results sheet
 """
 from __future__ import annotations
 
@@ -21,6 +22,8 @@ from pathlib import Path
 import openpyxl
 import pandas as pd
 import requests
+
+from _paths import EXCEL_DIR
 
 OPENFIGI_API_KEY = '9a5b92a9-cae1-47ad-bb52-9d6293d18364'
 OPENFIGI_URL     = "https://api.openfigi.com/v3/mapping"
@@ -54,6 +57,35 @@ FIGI_COLUMNS = [
     "securityType", "marketSector", "shareClassFIGI", "securityType2",
     "securityDescription",
 ]
+
+# Shared by create_security.py and security_reconcile.py — both upsert into
+# figi_lookup keyed on figi, preferring the new value but falling back to the
+# existing one when the new value is blank. comp_figi/shareclass_figi/update_at
+# always take the new value (FIGI matches are treated as authoritative for those).
+FIGI_LOOKUP_UPSERT_SQL = """
+    INSERT INTO figi_lookup
+        (security_id, name, ticker, exch, isin, cusip, sedol,
+         figi, comp_figi, shareclass_figi,
+         sectype, sectype2, mkt_sector, update_at)
+    VALUES
+        (%(security_id)s, %(name)s, %(ticker)s, %(exch)s, %(isin)s, %(cusip)s, %(sedol)s,
+         %(figi)s, %(comp_figi)s, %(shareclass_figi)s,
+         %(sectype)s, %(sectype2)s, %(mkt_sector)s, NOW())
+    ON CONFLICT (figi) DO UPDATE SET
+        security_id     = COALESCE(NULLIF(EXCLUDED.security_id,     ''), figi_lookup.security_id),
+        name            = COALESCE(NULLIF(EXCLUDED.name,            ''), figi_lookup.name),
+        ticker          = COALESCE(NULLIF(EXCLUDED.ticker,          ''), figi_lookup.ticker),
+        exch            = COALESCE(NULLIF(EXCLUDED.exch,            ''), figi_lookup.exch),
+        isin            = COALESCE(NULLIF(EXCLUDED.isin,            ''), figi_lookup.isin),
+        cusip           = COALESCE(NULLIF(EXCLUDED.cusip,           ''), figi_lookup.cusip),
+        sedol           = COALESCE(NULLIF(EXCLUDED.sedol,           ''), figi_lookup.sedol),
+        comp_figi       = EXCLUDED.comp_figi,
+        shareclass_figi = EXCLUDED.shareclass_figi,
+        sectype         = COALESCE(NULLIF(EXCLUDED.sectype,         ''), figi_lookup.sectype),
+        sectype2        = COALESCE(NULLIF(EXCLUDED.sectype2,        ''), figi_lookup.sectype2),
+        mkt_sector      = COALESCE(NULLIF(EXCLUDED.mkt_sector,      ''), figi_lookup.mkt_sector),
+        update_at       = NOW()
+"""
 
 
 def fetch(
@@ -209,7 +241,7 @@ def _cusip_to_isin(cusip: str, country_code: str = "US") -> str:
 
 # ── Test harness ──────────────────────────────────────────────────────────────
 
-_XLSX = Path(__file__).parent / "Excel" / "figi_utils.xlsx"
+_XLSX = EXCEL_DIR / "figi_utils.xlsx"
 _INPUT_SHEET  = "Securities"
 _OUTPUT_SHEET = "Results"
 

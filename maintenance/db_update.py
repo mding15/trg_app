@@ -37,7 +37,7 @@ Arguments
 Options
 -------
     --keys      Colon-separated key column(s) for the WHERE clause  (required)
-    --file      Excel filename inside maintenance/Excel/             (default: <table>.xlsx)
+    --file      Excel filename inside data/maintenance/Excel/         (default: <table>.xlsx)
     --sheet     Sheet name to read                                   (default: <table>)
     --dry-run   Show what would be updated without touching the DB
 """
@@ -53,8 +53,7 @@ import psycopg2.sql as pgsql
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from database2 import pg_connection
-
-EXCEL_DIR = Path(__file__).resolve().parent / "Excel"
+from _paths import EXCEL_DIR
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -285,7 +284,7 @@ def main() -> None:
     parser.add_argument("--keys",    required=True, metavar="KEY1:KEY2:...",
                         help="Colon-separated key column(s) used in the WHERE clause")
     parser.add_argument("--file",    default=None, metavar="FILENAME",
-                        help="Excel filename inside maintenance/Excel/ (default: <table>.xlsx)")
+                        help="Excel filename inside data/maintenance/Excel/ (default: <table>.xlsx)")
     parser.add_argument("--sheet",   default=None, metavar="SHEET",
                         help="Sheet name to read (default: <table>)")
     parser.add_argument("--dry-run", action="store_true",
