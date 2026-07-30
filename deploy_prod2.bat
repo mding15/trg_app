@@ -1,5 +1,11 @@
 @echo off
 setlocal
+REM Use Windows' native OpenSSH client explicitly, not whichever ssh/scp
+REM PATH resolves to first (Git for Windows' bundled MSYS build has been
+REM breaking local file writes mid-transfer with "Broken pipe" errors).
+set SSH=C:\Windows\System32\OpenSSH\ssh.exe
+set SCP=C:\Windows\System32\OpenSSH\scp.exe
+
 REM =============================================================================
 REM  deploy_prod2.bat — Deploy trg_app to prod2 EC2 instance
 REM
@@ -39,7 +45,7 @@ echo.
 echo ============================================================
 echo  Step 2: Uploading to %HOST%:%REMOTE_DIR%
 echo ============================================================
-scp -r -i "%KEY%" "%STAGE%\." %HOST%:%REMOTE_DIR%
+"%SCP%" -r -i "%KEY%" "%STAGE%\." %HOST%:%REMOTE_DIR%
 if %ERRORLEVEL% neq 0 (
     echo SCP FAILED. Aborting.
     exit /b 1
@@ -50,7 +56,7 @@ echo.
 echo ============================================================
 echo  Step 3: Restarting API service on EC2
 echo ============================================================
-ssh -i "%KEY%" %HOST% "sudo supervisorctl restart api"
+"%SSH%" -i "%KEY%" %HOST% "sudo supervisorctl restart api"
 if %ERRORLEVEL% neq 0 (
     echo SERVICE RESTART FAILED.
     exit /b 1

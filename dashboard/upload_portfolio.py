@@ -63,6 +63,18 @@ def _get_client_id(username: str) -> int:
     return row[0]
 
 
+def _get_account_client_id(account_id: int) -> int:
+    """Return the client_id that owns account_id. Tracked portfolios belong to
+    the account, not the uploader, so their client_id must come from here."""
+    with pg_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute('SELECT client_id FROM account WHERE account_id = %s', (account_id,))
+            row = cur.fetchone()
+    if not row:
+        raise Exception(f'Account not found: account_id={account_id}')
+    return row[0]
+
+
 def _save_file(file, client_id: int) -> tuple[Path, str]:
     """Save file to CLIENT_DIR/<client_id>/. Appends _v1, _v2, ... if filename already exists."""
     filename = secure_filename(file.filename)
@@ -86,16 +98,20 @@ def _save_file(file, client_id: int) -> tuple[Path, str]:
 def _insert_portfolio(username: str, name: str, filename: str,
                       port_type: str | None = None,
                       description: str | None = None,
-                      account_id: int | None = None) -> dict:
-    """Insert a portfolio_info record and return the new portfolio entry."""
+                      account_id: int | None = None,
+                      client_id: int | None = None) -> dict:
+    """Insert a portfolio_info record and return the new portfolio entry.
+
+    client_id is the record's owning client (account's client for tracked,
+    uploader's own client for adhoc) — resolved by the caller, not here.
+    """
     with pg_connection() as conn:
         with conn.cursor() as cur:
-            cur.execute('SELECT user_id, client_id, firstname, lastname FROM "user" WHERE username = %s', (username,))
+            cur.execute('SELECT user_id, firstname, lastname FROM "user" WHERE username = %s', (username,))
             row = cur.fetchone()
             user_id    = row[0] if row else None
-            client_id  = row[1] if row else None
-            first      = (row[2] or '').strip() if row else ''
-            last       = (row[3] or '').strip() if row else ''
+            first      = (row[1] or '').strip() if row else ''
+            last       = (row[2] or '').strip() if row else ''
             created_by = f'{first} {last}'.strip() or username
 
             cur.execute(
@@ -154,8 +170,10 @@ def upload_portfolio(username: str, name: str, request, account_id: int,
                      description: str | None = None) -> dict:
     """Save the uploaded file and insert a portfolio_info record.
 
-    Looks up client_id from the user table, saves the file to
-    CLIENT_DIR/<client_id>/, then inserts into portfolio_info.
+    client_id (both for the saved file's folder and the portfolio_info row)
+    comes from the account for tracked uploads (it belongs to the account,
+    regardless of who uploads it), and from the uploading user otherwise
+    (adhoc/legacy uploads are personal, not tied to an account).
     """
     if 'file' not in request.files:
         raise Exception('No file part')
@@ -163,10 +181,15 @@ def upload_portfolio(username: str, name: str, request, account_id: int,
     if file.filename == '':
         raise Exception('No selected file')
 
-    client_id = _get_client_id(username)
+    if port_type == 'tracked':
+        client_id = _get_account_client_id(account_id)
+    else:
+        client_id = _get_client_id(username)
+
     file_path, filename = _save_file(file, client_id)
     insert_account_id = account_id if port_type == 'tracked' else None
-    port_id, port = _insert_portfolio(username, name, filename, port_type, description, insert_account_id)
+    port_id, port = _insert_portfolio(username, name, filename, port_type, description,
+                                      insert_account_id, client_id)
 
     threading.Thread(
         target=_run_in_background,
@@ -705,7 +728,8 @@ def clone_portfolio(input_port_id: int, new_port_name: str, username: str,
     new_file_path = save_portfolio_to_template(template_positions, params, {}, client_id, new_filename)
 
     # Step 6: Insert portfolio_info
-    new_port_id, _ = _insert_portfolio(username, new_port_name, new_file_path.name, port_type='adhoc')
+    new_port_id, _ = _insert_portfolio(username, new_port_name, new_file_path.name,
+                                       port_type='adhoc', client_id=client_id)
     logger.info(f'cloned input_port_id={input_port_id} ({port_type}/{raw_id}) -> new port_id={new_port_id} ({new_port_name})')
 
     # Step 7: Insert DB records and run VaR pipeline
@@ -782,7 +806,8 @@ def clone_portfolio_old(port_id: int, new_port_name: str, username: str,
     new_file_path = save_portfolio_to_template(positions, params, limit, client_id, new_filename)
 
     # ── 4. Insert portfolio_info row ──────────────────────────────────────────
-    new_port_id, _ = _insert_portfolio(username, new_port_name, new_file_path.name, port_type='adhoc')
+    new_port_id, _ = _insert_portfolio(username, new_port_name, new_file_path.name,
+                                       port_type='adhoc', client_id=client_id)
     logger.info(f'cloned port_id={port_id} -> new port_id={new_port_id} ({new_port_name})')
 
     # ── 5. Kick off processing ────────────────────────────────────────────────

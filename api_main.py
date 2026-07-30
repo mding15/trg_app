@@ -27,5 +27,9 @@ if __name__ == '__main__':
     parser.add_argument('-test', action='store_true', help='use calculate_test() function')
 
     args = parser.parse_args()
-    
+
+    if not args.debug or os.environ.get("WERKZEUG_RUN_MAIN") == "true":
+        env_label = "PRODUCTION" if is_prod else "DEV"
+        print(f"Starting server [{env_label}] at http://localhost:{args.port}")
+
     app.run(debug=args.debug, port=args.port)

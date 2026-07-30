@@ -352,6 +352,25 @@ def get_securities():
     return Securities
 
 
+# get all Securities with isin/cusip/ticker merged in from security_xref
+# (lowercase columns, comma-space-joined when a SecurityID has more than
+# one REF_ID for a given REF_TYPE)
+def get_securities_with_ref(ref_types=('ISIN', 'CUSIP', 'Ticker'), delimiter=', '):
+    secs  = get_securities()
+    xrefs = get_xref()
+    for ref_type in ref_types:
+        col = ref_type.lower()
+        df = xrefs.loc[xrefs['REF_TYPE'] == ref_type, ['SecurityID', 'REF_ID']]
+        df = (
+            df.groupby('SecurityID')['REF_ID']
+              .agg(lambda s: delimiter.join(sorted(set(s))))
+              .reset_index()
+              .rename(columns={'REF_ID': col})
+        )
+        secs = secs.merge(df, on='SecurityID', how='left')
+    return secs
+
+
     
     
 # security xref

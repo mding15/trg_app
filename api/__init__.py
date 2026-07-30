@@ -66,5 +66,6 @@ with app.app_context():
     # db.create_all()  # Create tables if they don't exist
 
 from api import routes
+from api import ops_routes
 
     

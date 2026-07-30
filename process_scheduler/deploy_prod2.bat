@@ -1,5 +1,11 @@
 @echo off
 setlocal
+REM Use Windows' native OpenSSH client explicitly, not whichever ssh/scp
+REM PATH resolves to first (Git for Windows' bundled MSYS build has been
+REM breaking local file writes mid-transfer with "Broken pipe" errors).
+set SSH=C:\Windows\System32\OpenSSH\ssh.exe
+set SCP=C:\Windows\System32\OpenSSH\scp.exe
+
 REM =============================================================================
 REM  deploy_prod2.bat — Deploy process_scheduler to prod2 EC2
 REM
@@ -18,13 +24,13 @@ set LOCAL_DIR=C:\dev\claude\trg_app\process_scheduler
 
 REM ── Deploy ───────────────────────────────────────────────────────────────────
 echo Deploying *.py ...
-scp -i %KEY% %LOCAL_DIR%\*.py %HOST%:%REMOTE_DIR%/
+"%SCP%" -i %KEY% %LOCAL_DIR%\*.py %HOST%:%REMOTE_DIR%/
 
 echo Deploying *.sh ...
-scp -i %KEY% %LOCAL_DIR%\*.sh %HOST%:%REMOTE_DIR%/
+"%SCP%" -i %KEY% %LOCAL_DIR%\*.sh %HOST%:%REMOTE_DIR%/
 
 echo Deploying *.json ...
-scp -i %KEY% %LOCAL_DIR%\*.json %HOST%:%REMOTE_DIR%/
+"%SCP%" -i %KEY% %LOCAL_DIR%\*.json %HOST%:%REMOTE_DIR%/
 
 REM ── Done ─────────────────────────────────────────────────────────────────────
 echo.

@@ -53,13 +53,12 @@ import sqlalchemy.exc
 
 from trg_config import config
 
-from api import app, request_handler, bcrypt, swagger
-from api import request_handler_ft
+from api import app, bcrypt, swagger
+from api.dispatch import api_request, api_request_ft
 from api import create_account, schedule_demo_handler, request_demo_handler, sso_cookie
 from api import portfolios
-from api.auth import token_required, ops_role_required, authenticate, create_impersonation_token
+from api.auth import token_required, authenticate, create_impersonation_token
 from api import upload_handler
-from account import account_mgmt
 
 from dashboard.portfolios_page import (
     list_portfolios,
@@ -123,27 +122,6 @@ def login():
         return resp
     except sqlalchemy.exc.SQLAlchemyError as e:
         logger.error(f'Database error during login: {e}')
-        return jsonify({'error': 'Service temporarily unavailable. Please try again later.'}), 503
-    except Exception as e:
-        return jsonify({'error': str(e)}), 401
-
-OPS_ROLES = {'admin', 'superadmin', 'support'}
-
-@app.route('/api/ops/login', methods=['POST'])
-def ops_login():
-    try:
-        token, user = authenticate()
-        if user.role not in OPS_ROLES:
-            return jsonify({'error': 'Access denied. Ops portal requires admin, superadmin, or support role.'}), 403
-        return jsonify({
-            'token': token,
-            'role': user.role,
-            'email': user.email,
-            'firstname': user.firstname,
-            'lastname': user.lastname
-        })
-    except sqlalchemy.exc.SQLAlchemyError as e:
-        logger.error(f'Database error during ops login: {e}')
         return jsonify({'error': 'Service temporarily unavailable. Please try again later.'}), 503
     except Exception as e:
         return jsonify({'error': str(e)}), 401
@@ -245,121 +223,6 @@ def download_file(username, filename):
 # def run_calculation(username):
 #     return api_request('run_calculation', username, request)
            
-
-############################################################################################
-# SUPPORT
-
-#user_approval
-@app.route("/api/user_approval/data", methods=['GET','POST'])
-@ops_role_required
-def get_user_approval_data(username):
-    print('received: /api/user_approval_data')
-    return api_request('get_user_approval_data', username, request)
-
-@app.route("/api/user_approval/update", methods=['POST'])
-@ops_role_required
-def update_user_approval(username):
-    return api_request('update_user_approval', username, request)
-
-#user_entitlement
-@app.route("/api/get_entitlement")
-@ops_role_required
-def get_entitlement(username):
-    return api_request('get_entitlement', username)
-
-@app.route("/api/update_entitlement", methods=['POST'])
-@ops_role_required
-def update_entitlement(username):
-    return api_request('update_entitlement', username, request)
-
-@app.route("/api/get_entitlement_1client", methods=['POST'])
-@ops_role_required
-def get_entitlement_1client(username):
-    return api_request('get_entitlement_1client', username, request)
-
-#####################################################################################
-# ACCOUNT MANAGEMENT (ops)
-
-@app.route('/api/ops/clients', methods=['GET'])
-@ops_role_required
-def ops_get_clients(username):
-    try:
-        return jsonify(account_mgmt.get_clients()), 200
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-
-@app.route('/api/ops/accounts', methods=['GET'])
-@ops_role_required
-def ops_get_accounts(username):
-    client_id = request.args.get('client_id', type=int)
-    if client_id is None:
-        return jsonify({'error': 'client_id is required'}), 400
-    try:
-        return jsonify(account_mgmt.get_accounts(client_id)), 200
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-
-@app.route('/api/ops/account_access', methods=['GET'])
-@ops_role_required
-def ops_get_account_access(username):
-    account_id = request.args.get('account_id', type=int)
-    if account_id is None:
-        return jsonify({'error': 'account_id is required'}), 400
-    try:
-        return jsonify(account_mgmt.get_account_access(account_id)), 200
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-
-@app.route('/api/ops/client_users', methods=['GET'])
-@ops_role_required
-def ops_get_client_users(username):
-    client_id = request.args.get('client_id', type=int)
-    if client_id is None:
-        return jsonify({'error': 'client_id is required'}), 400
-    try:
-        return jsonify(account_mgmt.get_client_users(client_id)), 200
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-
-@app.route('/api/ops/account_access', methods=['POST'])
-@ops_role_required
-def ops_add_account_access(username):
-    data = request.get_json() or {}
-    account_id = data.get('account_id')
-    user_id = data.get('user_id')
-    is_default = data.get('is_default', False)
-    if not account_id or not user_id:
-        return jsonify({'error': 'account_id and user_id are required'}), 400
-    try:
-        new_id = account_mgmt.add_account_access(account_id, user_id, is_default)
-        return jsonify({'id': new_id}), 201
-    except ValueError as e:
-        return jsonify({'error': str(e)}), 409
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-
-@app.route('/api/ops/accounts', methods=['POST'])
-@ops_role_required
-def ops_create_account(username):
-    data = request.get_json() or {}
-    account_name = data.get('account_name', '').strip()
-    short_name = data.get('short_name', '').strip()
-    owner_id = data.get('owner_id')
-    client_id = data.get('client_id')
-    parent_account_id = data.get('parent_account_id') or None
-    if not account_name or not owner_id or not client_id:
-        return jsonify({'error': 'account_name, owner_id, and client_id are required'}), 400
-    try:
-        new_id = account_mgmt.create_account(account_name, short_name, owner_id, client_id, parent_account_id)
-        return jsonify({'account_id': new_id}), 201
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
 
 @app.route('/api/upload_security', methods=['POST'])
 @token_required
@@ -539,28 +402,6 @@ def test(username):
     return api_request('test', username, request)
 
 
-def api_request(route, username, request=None):
-    
-    if request:
-        input_data = request.json
-    else:
-        input_data = {}
-
-    response, status = request_handler.get_response(route, username, input_data)
-    return jsonify(response), status
-
-ft_user_routes = ['risk_calculator']
-def api_request_ft(route, username, request):
-    if route in ft_user_routes:
-        response, status = request_handler_ft.get_response(route, username, request.json)
-    else:
-        status = 403 # Permission denied
-        response = {
-            'Status' : 'Failed',
-            'Error'  : 'Execution permission denied'
-            }
-    return jsonify(response), status
-    
 
 def handle_sup_download(username, category, filename):
     category_folder = {
@@ -1250,6 +1091,17 @@ def get_accounts(username):
     accounts = get_accounts_for_user(username)
     return jsonify(accounts)
 
+
+@app.route("/api/dashboard/message")
+@token_required
+def get_dashboard_message(username):
+    from dashboard.dashboard_msg import dashboard_msg
+    try:
+        msg = dashboard_msg(username)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    return jsonify({"message": msg})
+
 # ── Holdings page ─────────────────────────────────────────────────────────────
 
 @app.route("/api/holdings/summary")
@@ -1369,21 +1221,52 @@ def pp_delete_portfolio(username, pid):
 def pp_download_portfolio(username, pid):
     from database2 import pg_connection
     from dashboard.upload_portfolio import get_portfolio_file_path
+
+    # ── Step 1: fetch the portfolio_info row and check permission ────────────
+    # Tracked portfolios belong to an account — access is via account_access.
+    # Adhoc (and legacy, port_type IS NULL) portfolios belong to whoever
+    # uploaded them — access is via matching client_id on the "user" table.
     with pg_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT pi.filename, pi.client_id
-                FROM portfolio_info pi
-                JOIN "user" u ON u.client_id = pi.client_id
-                WHERE pi.port_id = %s AND u.username = %s
+                SELECT filename, client_id, account_id, port_type
+                FROM portfolio_info
+                WHERE port_id = %s
                 """,
-                (pid, username),
+                (pid,),
             )
             row = cur.fetchone()
     if not row:
         return jsonify({'error': 'Not found'}), 404
-    filename, client_id = row
+    filename, client_id, account_id, port_type = row
+
+    with pg_connection() as conn:
+        with conn.cursor() as cur:
+            if port_type == 'tracked':
+                cur.execute(
+                    """
+                    SELECT 1
+                    FROM account_access aa
+                    JOIN "user" u ON u.user_id = aa.user_id
+                    WHERE aa.account_id = %s AND u.username = %s
+                    """,
+                    (account_id, username),
+                )
+            else:
+                cur.execute(
+                    """
+                    SELECT 1
+                    FROM "user"
+                    WHERE username = %s AND client_id = %s
+                    """,
+                    (username, client_id),
+                )
+            has_access = cur.fetchone() is not None
+    if not has_access:
+        return jsonify({'error': 'Access denied'}), 403
+
+    # ── Step 2: resolve the file path directly from portfolio_info ───────────
     file_path = get_portfolio_file_path(client_id, filename)
     if not file_path.exists():
         return jsonify({'error': 'File not found on server'}), 404

@@ -109,6 +109,9 @@ def process_input(params, positions, limit):
     if 'CUSIP' in positions:
         positions['CUSIP'] = positions['CUSIP'].apply(lambda x: x[-9:] if isinstance(x, str) else x) 
 
+    if 'Ticker' in positions:
+        positions['Ticker'] = positions['Ticker'].apply(lambda x: x.replace(' ', '') if isinstance(x, str) else x)  # Remove all whitespace from Ticker
+
     # remove blank row    
     blank_rows = positions['SecurityName'].isna() & positions['ISIN'].isna() & positions['CUSIP'].isna() & positions['Ticker'].isna()
     positions = positions[~blank_rows]

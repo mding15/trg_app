@@ -31,6 +31,27 @@ def create_security(
     return security_id
 
 
+def create_option_info(
+    cur,
+    security_id: str,
+    option_type: str | None,
+    option_class: str | None,
+    maturity,
+    strike: float | None,
+    underlying: str | None,
+    underlying_sec_id: str | None,
+) -> None:
+    """Insert a new row into option_info for security_id."""
+    cur.execute(
+        """
+        INSERT INTO option_info
+            (security_id, option_type, option_class, maturity, strike, underlying, underlying_sec_id)
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
+        """,
+        (security_id, option_type, option_class, maturity, strike, underlying, underlying_sec_id),
+    )
+
+
 def add_xref_if_missing(
     cur,
     security_id: str,

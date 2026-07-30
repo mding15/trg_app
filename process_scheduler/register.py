@@ -19,6 +19,13 @@ import urllib.error
 from pathlib import Path
 
 import jwt
+import truststore
+
+# Validate certificates against the OS trust store (schannel on Windows)
+# instead of Python's bundled CA file. Needed on machines where an
+# HTTPS-scanning antivirus (e.g. Norton) re-signs connections with its own
+# certs — those are only trusted by the OS, not by Python's own CA bundle.
+truststore.inject_into_ssl()
 
 SCHEDULER_URL = 'https://engine.tailriskglobal.com/scheduler'
 BASE_PATH     = '/home/ec2-user'

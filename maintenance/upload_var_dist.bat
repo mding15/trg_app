@@ -1,5 +1,11 @@
 @echo off
 setlocal
+REM Use Windows' native OpenSSH client explicitly, not whichever ssh/scp
+REM PATH resolves to first (Git for Windows' bundled MSYS build has been
+REM breaking local file writes mid-transfer with "Broken pipe" errors).
+set SSH=C:\Windows\System32\OpenSSH\ssh.exe
+set SCP=C:\Windows\System32\OpenSSH\scp.exe
+
 REM =============================================================================
 REM  upload_var_dist.bat -- Upload VaR HDF5 distribution file to prod2 EC2
 REM
@@ -18,7 +24,7 @@ echo  Uploading VaR distribution to %HOST%
 echo  %LOCAL%  -^>  %REMOTE%
 echo ============================================================
 
-scp -i "%KEY%" "%LOCAL%" %HOST%:%REMOTE%
+"%SCP%" -i "%KEY%" "%LOCAL%" %HOST%:%REMOTE%
 if %ERRORLEVEL% neq 0 (
     echo UPLOAD FAILED.
     exit /b 1

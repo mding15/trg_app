@@ -1,5 +1,11 @@
 @echo off
 setlocal
+REM Use Windows' native OpenSSH client explicitly, not whichever ssh/scp
+REM PATH resolves to first (Git for Windows' bundled MSYS build has been
+REM breaking local file writes mid-transfer with "Broken pipe" errors).
+set SSH=C:\Windows\System32\OpenSSH\ssh.exe
+set SCP=C:\Windows\System32\OpenSSH\scp.exe
+
 
 set PROD2_KEY=C:\Users\mgdin\.ssh\id_rsa
 set PROD2_HOST=ec2-user@ec2-54-86-24-102.compute-1.amazonaws.com
@@ -11,7 +17,7 @@ set REMOTE=/home/ec2-user/api/data/public/input_template.xlsx
 echo ============================================================
 echo  Uploading input_template.xlsx to prod2
 echo ============================================================
-scp -i "%PROD2_KEY%" "%LOCAL%" %PROD2_HOST%:%REMOTE%
+"%SCP%" -i "%PROD2_KEY%" "%LOCAL%" %PROD2_HOST%:%REMOTE%
 if %ERRORLEVEL% neq 0 (
     echo SCP to prod2 FAILED. Aborting.
     exit /b 1
@@ -21,7 +27,7 @@ echo.
 echo ============================================================
 echo  Uploading input_template.xlsx to dev2
 echo ============================================================
-scp -i "%DEV2_KEY%" "%LOCAL%" %DEV2_HOST%:%REMOTE%
+"%SCP%" -i "%DEV2_KEY%" "%LOCAL%" %DEV2_HOST%:%REMOTE%
 if %ERRORLEVEL% neq 0 (
     echo SCP to dev2 FAILED.
     exit /b 1
