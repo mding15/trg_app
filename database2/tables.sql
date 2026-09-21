@@ -1384,3 +1384,609 @@ CREATE TABLE IF NOT EXISTS public.risk_limit_level (
 	mid float4 NULL,
 	high float4 NULL
 );
+
+-- ---------------------------------------------------------------
+-- Remaining tables that exist in the live postgres database
+-- (trg-input-database) but had no definition in this file.
+-- Pulled from information_schema on 2026-09-21. Includes legacy
+-- tables (account_run_parameters, limit_var, limit_concentration,
+-- security_attribute, private_equity, stat_private_equity) that
+-- are still present live alongside their newer replacements.
+-- ---------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS public.account_run_parameters (
+    id int4 DEFAULT nextval('account_run_parameters_id_seq'::regclass) NOT NULL,
+    account_id int4 NOT NULL,
+    "PortfolioName" varchar(100) NOT NULL,
+    "RiskHorizon" varchar(20) NULL,
+    "TailMeasure" varchar(20) NULL,
+    "ReturnFrequency" varchar(20) NULL,
+    "Benchmark" varchar(50) NULL,
+    "ExpectedReturn" varchar(20) NULL,
+    "BaseCurrency" varchar(20) NULL,
+    insert_date date DEFAULT CURRENT_DATE NULL,
+    "AsofDate" date NULL,
+    "ReportDate" date NULL,
+    CONSTRAINT account_run_parameters_pkey PRIMARY KEY (id),
+    CONSTRAINT unique_account_id UNIQUE (account_id)
+);
+
+CREATE TABLE IF NOT EXISTS public.adhoc_temp (
+    id int4 DEFAULT nextval('adhoc_temp_id_seq'::regclass) NOT NULL,
+    batch varchar(50) NULL,
+    char_value varchar(200) NULL,
+    float_value float8 NULL,
+    date_value date NULL,
+    CONSTRAINT adhoc_temp_pkey PRIMARY KEY (id)
+);
+
+CREATE TABLE IF NOT EXISTS public.approval (
+    id int4 NOT NULL,
+    status varchar(20) NULL,
+    CONSTRAINT approval_pkey PRIMARY KEY (id)
+);
+
+CREATE TABLE IF NOT EXISTS public.broker_asset_class_map (
+    broker text NOT NULL,
+    security_code text NOT NULL,
+    asset_class text NULL,
+    CONSTRAINT broker_asset_class_map_pkey PRIMARY KEY (broker, security_code)
+);
+
+CREATE TABLE IF NOT EXISTS public.class_expect_return (
+    "Class" varchar(50) NULL,
+    "SC1" varchar(50) NULL,
+    "ExpectedReturn" float4 NULL
+);
+
+CREATE TABLE IF NOT EXISTS public.class_taxonomy (
+    "Class" varchar(50) NULL,
+    "SC1" varchar(50) NULL,
+    "SC2" varchar(50) NULL
+);
+
+CREATE TABLE IF NOT EXISTS public.country_region (
+    "Country" varchar(50) NULL,
+    "Region" varchar(50) NULL,
+    "UpdateDate" date NULL
+);
+
+CREATE TABLE IF NOT EXISTS public.fiae (
+    "ID" varchar(50) NULL,
+    "SecurityName" varchar(64) NULL,
+    "ISIN" varchar(50) NULL,
+    "Cusip" varchar(50) NULL,
+    "Ticker" varchar(64) NULL,
+    "Quantity" numeric NULL,
+    "Market Value" numeric NULL,
+    "Asset Class" varchar(50) NULL,
+    "Currency" varchar(50) NULL,
+    "Column10" varchar(50) NULL,
+    "Column11" varchar(50) NULL
+);
+
+CREATE TABLE IF NOT EXISTS public.fiae_portfolio (
+    "SecurityID" varchar(50) NULL,
+    "SecurityName" varchar(64) NULL,
+    "Account" varchar(50) NULL,
+    "Broker" varchar(50) NULL,
+    "FIAE_ID" varchar(50) NULL,
+    "ISIN" varchar(50) NULL,
+    "Ticker" varchar(64) NULL,
+    "Quantity" numeric NULL,
+    "MarketValue" varchar(50) NULL,
+    "Weight" varchar(50) NULL,
+    "LastPrice" varchar(50) NULL,
+    "LastPriceDate" varchar(50) NULL,
+    "AssetReturnClass" varchar(50) NULL,
+    "ExpectedReturn" varchar(50) NULL,
+    "Class" varchar(50) NULL,
+    "SC1" varchar(50) NULL,
+    "SC2" varchar(50) NULL,
+    "Country" varchar(50) NULL,
+    "Region" varchar(50) NULL,
+    "Sector" varchar(50) NULL,
+    "Industry" varchar(50) NULL,
+    "Currency" varchar(50) NULL,
+    "Option Type" varchar(50) NULL,
+    "Coupon Rate" varchar(50) NULL,
+    "Maturity Date" varchar(50) NULL,
+    "CUSIP" varchar(50) NULL,
+    "Underlying Security ID" varchar(50) NULL,
+    "Frequency Months" varchar(50) NULL,
+    "OptionStrike" varchar(50) NULL
+);
+
+CREATE TABLE IF NOT EXISTS public.figi_lookup (
+    id int4 DEFAULT nextval('figi_lookup_id_seq'::regclass) NOT NULL,
+    security_id varchar(20) NULL,
+    name varchar(255) NULL,
+    ticker varchar(50) NULL,
+    exch varchar(10) NULL,
+    isin varchar(12) NULL,
+    cusip varchar(9) NULL,
+    sedol varchar(7) NULL,
+    figi varchar(12) NULL,
+    comp_figi varchar(12) NULL,
+    shareclass_figi varchar(12) NULL,
+    sectype varchar(100) NULL,
+    sectype2 varchar(100) NULL,
+    mkt_sector varchar(50) NULL,
+    created_at timestamptz DEFAULT now() NULL,
+    update_at timestamptz DEFAULT now() NULL,
+    CONSTRAINT figi_lookup_pkey PRIMARY KEY (id)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uix_figi_lookup_figi ON public.figi_lookup USING btree (figi);
+
+CREATE TABLE IF NOT EXISTS public.fund_maturity (
+    "SecurityID" varchar(50) NULL,
+    "Maturity" varchar(50) NULL,
+    "Weight" float4 NULL,
+    "UpdateDate" date NULL
+);
+
+CREATE TABLE IF NOT EXISTS public.fund_rating (
+    "SecurityID" varchar(50) NULL,
+    "Rating" varchar(50) NULL,
+    "Weight" float4 NULL,
+    "UpdateDate" date NULL
+);
+
+CREATE TABLE IF NOT EXISTS public.fund_regions (
+    "SecurityID" varchar(50) NULL,
+    "Region" varchar(50) NULL,
+    "Weight" float4 NULL,
+    "UpdateDate" date NULL
+);
+
+CREATE TABLE IF NOT EXISTS public.fund_sectors (
+    "SecurityID" varchar(50) NULL,
+    "Sector" varchar(50) NULL,
+    "Weight" float4 NULL,
+    "UpdateDate" date NULL
+);
+
+CREATE TABLE IF NOT EXISTS public.limit_concentration (
+    port_group_id int4 NOT NULL,
+    category varchar(20) NOT NULL,
+    limit_value float4 NULL
+);
+
+CREATE TABLE IF NOT EXISTS public.limit_var (
+    port_group_id int4 NOT NULL,
+    risk_type varchar(20) NOT NULL,
+    low float4 NULL,
+    mid1 float4 NULL,
+    mid2 float4 NULL,
+    high float4 NULL
+);
+
+CREATE TABLE IF NOT EXISTS public.mkt_data_info (
+    id int4 DEFAULT nextval('mkt_data_info_id_seq'::regclass) NOT NULL,
+    "SecurityID" varchar(20) NULL,
+    "Category" varchar(20) NULL,
+    "SecurityName" varchar(1000) NULL,
+    "AssetClass" varchar(20) NULL,
+    "AssetType" varchar(20) NULL,
+    "DataSource" varchar(20) NULL,
+    "StartDate" date NOT NULL,
+    "EndDate" date NOT NULL,
+    "Length" int4 NULL,
+    "MaxValue" float8 NULL,
+    "MinValue" float8 NULL,
+    "AverageValue" float8 NULL,
+    "StdValue" float8 NULL,
+    "LastUpdate" date DEFAULT CURRENT_DATE NULL,
+    CONSTRAINT mkt_data_info_pkey PRIMARY KEY (id)
+);
+
+CREATE TABLE IF NOT EXISTS public.mssb_price (
+    feed_date date NOT NULL,
+    routing_code text NULL,
+    product_id text NULL,
+    symbol_cusip text NULL,
+    price1 numeric NULL,
+    option_symbol text NULL,
+    price_last_date date NULL,
+    cusip text NULL,
+    price2 numeric NULL,
+    blank text NULL
+);
+
+CREATE TABLE IF NOT EXISTS public.mssb_sec_code (
+    security_code text NOT NULL,
+    asset_class text NULL,
+    asset_type text NULL,
+    updated_at timestamp DEFAULT now() NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS public.mssb_secty (
+    feed_date date NOT NULL,
+    sec_routing_code text NULL,
+    sec_cusip text NULL,
+    sec_symbol text NULL,
+    sec_description text NULL,
+    sec_underly_cusip text NULL,
+    sec_sedol text NULL,
+    sec_isin text NULL,
+    sec_sp_rating text NULL,
+    sec_moody_rating text NULL,
+    sec_close_price numeric NULL,
+    sec_current_face numeric NULL,
+    sec_original_face numeric NULL,
+    sec_curr_mbs_factor numeric NULL,
+    sec_curr_mbs_factor_date date NULL,
+    sec_currency text NULL,
+    sec_issue_date date NULL,
+    sec_dated_date date NULL,
+    sec_pay_date date NULL,
+    sec_mat_exp_date date NULL,
+    sec_day_count text NULL,
+    sec_pay_frequency text NULL,
+    sec_state_code text NULL,
+    sec_country_code text NULL,
+    sec_exchange_code text NULL,
+    sec_tax_code text NULL,
+    sec_maturity_type text NULL,
+    sec_ex_div_date date NULL,
+    sec_div_record_date date NULL,
+    sec_cde_security text NULL,
+    sec_interest_rate numeric NULL,
+    sec_share_multiplier numeric NULL,
+    sec_product_id text NULL,
+    sec_last_price_date date NULL,
+    sec_retrict_flag text NULL,
+    sec_inst_type text NULL,
+    bond_type text NULL,
+    bond_status_ind text NULL,
+    alt_sec_ind text NULL
+);
+
+CREATE TABLE IF NOT EXISTS public.mssb_taxlot (
+    feed_date date NOT NULL,
+    routing_code text NULL,
+    account text NULL,
+    cusip text NULL,
+    symbol text NULL,
+    security_type text NULL,
+    security_description text NULL,
+    tax_lot_qty numeric NULL,
+    tax_lot_price numeric NULL,
+    total_cost numeric NULL,
+    trade_date date NULL,
+    settle_date date NULL,
+    adjusted_trade_date date NULL,
+    buy_sell_indicator text NULL,
+    isin text NULL,
+    filler text NULL,
+    tax_lot_cost numeric NULL,
+    cost_adjusted numeric NULL,
+    original_face numeric NULL,
+    open_sequence_number text NULL,
+    source_indicator text NULL,
+    unreal_gain_loss numeric NULL,
+    close_method text NULL,
+    product_id text NULL,
+    underlying_shares numeric NULL,
+    alternate_security_indicator text NULL,
+    wash_adjusted_indicator text NULL,
+    inheritance_gifted_indicator text NULL,
+    irs_covered_indicator text NULL,
+    adjusted_trade_date_due_to_wash date NULL,
+    adjusted_cost_after_wash numeric NULL,
+    wash_adjusted_amount numeric NULL
+);
+
+CREATE TABLE IF NOT EXISTS public.mssb_trans (
+    feed_date date NOT NULL,
+    routing_code text NULL,
+    account text NULL,
+    cusip text NULL,
+    security_description text NULL,
+    tran_code text NULL,
+    tran_date date NULL,
+    trade_date date NULL,
+    settle_date date NULL,
+    quantity numeric NULL,
+    price numeric NULL,
+    accrued_interest numeric NULL,
+    other_fee_base numeric NULL,
+    other_fee_local numeric NULL,
+    comm_base numeric NULL,
+    comm_local numeric NULL,
+    total_amount numeric NULL,
+    broker text NULL,
+    fx_rate numeric NULL,
+    secondary_fee_base numeric NULL,
+    secondary_fee_local numeric NULL,
+    original_face numeric NULL,
+    factor numeric NULL,
+    coupon numeric NULL,
+    issue_date date NULL,
+    maturity_date date NULL,
+    current_order text NULL,
+    previous_order text NULL,
+    cancel_indicator text NULL,
+    buy_sell_indicator text NULL,
+    symbol text NULL,
+    exchange text NULL,
+    security_code text NULL,
+    security_no text NULL,
+    postage_amount numeric NULL,
+    foreign_tax numeric NULL,
+    fc_number text NULL,
+    broker_code1_4 text NULL,
+    broker_code_5_6 text NULL,
+    broker_code_7 text NULL,
+    sedol text NULL,
+    isin text NULL,
+    principal numeric NULL,
+    confirm_trailer text NULL,
+    filler text NULL,
+    vsp_code text NULL,
+    alternate_transaction_code text NULL,
+    trade_date_1 date NULL,
+    sb_alpha_tran_code text NULL,
+    sb_source_destination text NULL,
+    solicited_or_non_solicited text NULL,
+    sub_category_code text NULL,
+    blank_1 text NULL,
+    new_symbol_field text NULL,
+    new_security_type text NULL,
+    vsp_date_2 text NULL,
+    vsp_price_2 numeric NULL,
+    vsp_qnty_2 numeric NULL,
+    alternate_security_indicator text NULL,
+    blank_2 text NULL
+);
+
+CREATE TABLE IF NOT EXISTS public.pbi_current_report_url (
+    id int4 DEFAULT nextval('pbi_current_report_url_id_seq'::regclass) NOT NULL,
+    report_url varchar(200) NOT NULL,
+    version varchar(20) NULL,
+    is_active int4 NULL,
+    create_date date NOT NULL,
+    CONSTRAINT pbi_current_report_url_pkey PRIMARY KEY (id)
+);
+
+CREATE TABLE IF NOT EXISTS public.pbi_report_url (
+    id int4 DEFAULT nextval('pbi_report_url_id_seq'::regclass) NOT NULL,
+    client_id int4 NOT NULL,
+    pgroup_id int4 NULL,
+    report_url varchar(200) NOT NULL,
+    is_active int4 NULL,
+    create_date date NULL,
+    CONSTRAINT pbi_report_url_pkey PRIMARY KEY (id)
+);
+
+CREATE TABLE IF NOT EXISTS public.port_limit (
+    limit_category varchar(100) NULL,
+    limit_value numeric NULL,
+    port_id int4 NULL
+);
+
+CREATE TABLE IF NOT EXISTS public.portfolio_group (
+    pgroup_id int4 DEFAULT nextval('portfolio_group_pgroup_id_seq'::regclass) NOT NULL,
+    client_id int4 NOT NULL,
+    group_name varchar(100) NULL,
+    create_date date NOT NULL,
+    CONSTRAINT portfolio_group_pkey PRIMARY KEY (pgroup_id),
+    CONSTRAINT portfolio_group_client_id_fkey FOREIGN KEY (client_id) REFERENCES public.client(client_id)
+);
+
+CREATE TABLE IF NOT EXISTS public.private_equity (
+    model_id varchar(20) NOT NULL,
+    security_id varchar(20) NOT NULL,
+    security_name varchar(200) NULL,
+    benchmark varchar(200) NULL,
+    proxy varchar(200) NULL,
+    proxy_id varchar(20) NULL,
+    correlation numeric NULL,
+    beta numeric NULL,
+    simga numeric NULL,
+    proxy_vol numeric NULL,
+    hist_vol numeric NULL,
+    adj_vol numeric NULL,
+    liquidity_factor numeric NULL,
+    tail_shock numeric NULL
+);
+CREATE INDEX IF NOT EXISTS idx_private_equity_id ON public.private_equity USING btree (model_id, security_id);
+
+CREATE TABLE IF NOT EXISTS public.risk_horizon_days (
+    risk_horizon varchar(20) NOT NULL,
+    days int4 NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS public.roles (
+    id int4 NOT NULL,
+    role varchar(20) NULL,
+    CONSTRAINT roles_pkey PRIMARY KEY (id)
+);
+
+CREATE TABLE IF NOT EXISTS public.sch_processes (
+    id varchar(64) NOT NULL,
+    name varchar(255) NOT NULL,
+    description text NULL,
+    script_path text NOT NULL,
+    script_type varchar(16) NOT NULL,
+    schedule_time varchar(5) NULL,
+    dependencies jsonb DEFAULT '[]'::jsonb NULL,
+    max_retries int4 DEFAULT 2 NULL,
+    retry_delay_seconds int4 DEFAULT 60 NULL,
+    enabled bool DEFAULT true NULL,
+    created_at timestamptz DEFAULT now() NULL,
+    updated_at timestamptz DEFAULT now() NULL,
+    venv_path varchar(512) NULL,
+    CONSTRAINT sch_processes_pkey PRIMARY KEY (id)
+);
+
+CREATE TABLE IF NOT EXISTS public.sch_config (
+    key varchar(64) NOT NULL,
+    value text NOT NULL,
+    updated_at timestamptz DEFAULT now() NULL,
+    CONSTRAINT sch_config_pkey PRIMARY KEY (key)
+);
+
+CREATE TABLE IF NOT EXISTS public.sch_daily_runs (
+    id int4 DEFAULT nextval('sch_daily_runs_id_seq'::regclass) NOT NULL,
+    process_id varchar(64) NOT NULL,
+    run_date date NOT NULL,
+    status varchar(16) DEFAULT 'waiting'::character varying NOT NULL,
+    attempts int4 DEFAULT 0 NULL,
+    blocked_by jsonb DEFAULT '[]'::jsonb NULL,
+    start_time timestamptz NULL,
+    end_time timestamptz NULL,
+    CONSTRAINT sch_daily_runs_pkey PRIMARY KEY (id),
+    CONSTRAINT sch_daily_runs_process_id_run_date_key UNIQUE (process_id, run_date),
+    CONSTRAINT sch_daily_runs_process_id_fkey FOREIGN KEY (process_id) REFERENCES public.sch_processes(id)
+);
+CREATE INDEX IF NOT EXISTS idx_daily_runs_date ON public.sch_daily_runs USING btree (run_date);
+CREATE INDEX IF NOT EXISTS idx_daily_runs_status ON public.sch_daily_runs USING btree (status);
+
+CREATE TABLE IF NOT EXISTS public.sch_run_attempts (
+    id int4 DEFAULT nextval('sch_run_attempts_id_seq'::regclass) NOT NULL,
+    process_id varchar(64) NOT NULL,
+    run_date date NOT NULL,
+    attempt_number int4 NOT NULL,
+    triggered_by varchar(16) DEFAULT 'scheduler'::character varying NULL,
+    start_time timestamptz NOT NULL,
+    end_time timestamptz NULL,
+    status varchar(16) NOT NULL,
+    exit_code int4 NULL,
+    stdout text NULL,
+    stderr text NULL,
+    CONSTRAINT sch_run_attempts_pkey PRIMARY KEY (id),
+    CONSTRAINT sch_run_attempts_process_id_fkey FOREIGN KEY (process_id) REFERENCES public.sch_processes(id)
+);
+CREATE INDEX IF NOT EXISTS idx_run_attempts_proc_date ON public.sch_run_attempts USING btree (process_id, run_date);
+
+CREATE TABLE IF NOT EXISTS public.security_attribute (
+    security_id varchar(20) NOT NULL,
+    security_name varchar(1000) NULL,
+    expected_return float4 NULL,
+    currency varchar(20) NULL,
+    "class" varchar(20) NULL,
+    sc1 varchar(20) NULL,
+    sc2 varchar(20) NULL,
+    country varchar(50) NULL,
+    region varchar(50) NULL,
+    sector varchar(50) NULL,
+    industry varchar(50) NULL,
+    option_type varchar(20) NULL,
+    payment_frequency int4 NULL,
+    maturity_date date NULL,
+    option_strike float4 NULL,
+    underlying_security_id varchar(20) NULL,
+    coupon_rate float4 NULL,
+    isin varchar(200) NULL,
+    cusip varchar(200) NULL,
+    ticker varchar(200) NULL,
+    CONSTRAINT security_attribute_pkey PRIMARY KEY (security_id)
+);
+
+CREATE TABLE IF NOT EXISTS public.security_sectors (
+    "SecurityID" varchar(50) NULL,
+    "Sector" varchar(50) NULL,
+    "Industry" varchar(50) NULL,
+    "Country" varchar(50) NULL,
+    "UpdateDate" date NULL
+);
+
+CREATE TABLE IF NOT EXISTS public.security_xref_deleted (
+    id int4 DEFAULT nextval('security_xref_deleted_id_seq'::regclass) NOT NULL,
+    "REF_ID" varchar(200) NOT NULL,
+    "REF_TYPE" varchar(20) NOT NULL,
+    "SecurityID" varchar(20) NULL,
+    "DataSource" varchar(100) NULL,
+    "DateDeleted" date DEFAULT CURRENT_DATE NOT NULL,
+    "ExchCode" varchar(10) NULL,
+    CONSTRAINT security_xref_deleted_pkey PRIMARY KEY (id)
+);
+
+CREATE TABLE IF NOT EXISTS public.stat_private_equity (
+    "SecurityID" varchar(50) NULL,
+    "SecurityName" varchar(64) NULL,
+    "Ticker" varchar(50) NULL,
+    "SEDOL" varchar(50) NULL,
+    "CUSIP" varchar(50) NULL,
+    "ISIN" varchar(50) NULL,
+    "Currency" varchar(50) NULL,
+    "AssetClass" varchar(50) NULL,
+    "AssetType" varchar(50) NULL,
+    "Benchmark" varchar(50) NULL,
+    "Proxy" varchar(50) NULL,
+    "ProxySymbol" varchar(50) NULL,
+    "ProxyCorr" float4 NULL,
+    "MonthlyVol" float4 NULL,
+    "ProxyBeta" float4 NULL,
+    "ResVol" float4 NULL,
+    hist_vol float4 NULL,
+    proxy_vol float4 NULL,
+    hist_beta float4 NULL,
+    hist_r_sq float4 NULL,
+    sim_vol float4 NULL,
+    "Liquidity Adjusted" float4 NULL,
+    "Tail_Shock" float4 NULL,
+    report_id int4 NULL
+);
+
+CREATE TABLE IF NOT EXISTS public.user_entitilement (
+    id int4 DEFAULT nextval('user_entitilement_id_seq'::regclass) NOT NULL,
+    user_id int4 NOT NULL,
+    port_group_id int4 NOT NULL,
+    permission varchar(20) NULL,
+    update_date date NOT NULL,
+    CONSTRAINT user_entitilement_pkey PRIMARY KEY (id),
+    CONSTRAINT user_entitilement_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.user(user_id),
+    CONSTRAINT user_entitilement_port_group_id_fkey FOREIGN KEY (port_group_id) REFERENCES public.portfolio_group(pgroup_id)
+);
+
+CREATE TABLE IF NOT EXISTS public.user_report_mapping_table (
+    id int4 DEFAULT nextval('user_report_mapping_table_id_seq'::regclass) NOT NULL,
+    client_id int4 NULL,
+    pgroup_id int4 NULL,
+    report_id varchar(20) NOT NULL,
+    email varchar(120) NOT NULL,
+    report_name varchar(200) NULL,
+    CONSTRAINT user_report_mapping_table_pkey PRIMARY KEY (id)
+);
+
+CREATE TABLE IF NOT EXISTS public.user_temp (
+    user_id int4 NULL,
+    username varchar(120) NULL,
+    email varchar(120) NULL,
+    password varchar(60) NULL,
+    approval int4 NULL,
+    phone varchar(20) NULL,
+    client_id int4 NULL,
+    role varchar(20) NULL,
+    create_date date NULL,
+    firstname varchar(100) NULL,
+    lastname varchar(100) NULL,
+    activation_completed bool NULL
+);
+
+CREATE TABLE IF NOT EXISTS public.yh_price_stats (
+    ticker varchar(20) NULL,
+    min_date date NULL,
+    max_date date NULL,
+    count int8 NULL
+);
+
+CREATE TABLE IF NOT EXISTS public.yh_tickers (
+    ticker varchar(20) NOT NULL,
+    securitytype varchar(20) NOT NULL,
+    securityname varchar(500) NULL,
+    CONSTRAINT yh_tickers_pkey PRIMARY KEY (ticker)
+);
+
+CREATE TABLE IF NOT EXISTS public.yh_tickers_ids (
+    ticker text NOT NULL,
+    cusip text NULL,
+    isin text NULL,
+    cik text NULL,
+    found_in_filing text NULL,
+    filing_date date NULL,
+    updated_at timestamptz DEFAULT now() NULL,
+    CONSTRAINT yh_tickers_ids_pkey PRIMARY KEY (ticker)
+);
