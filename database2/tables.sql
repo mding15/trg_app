@@ -27,6 +27,7 @@ CREATE TABLE public.client (
 	create_date date NOT NULL,
 	aum varchar(50) NULL,
 	primary_interest varchar(100) NULL,
+	is_active bool NULL,
 	CONSTRAINT client_client_name_key UNIQUE (client_name),
 	CONSTRAINT client_pkey PRIMARY KEY (client_id)
 );
@@ -86,19 +87,20 @@ CREATE TABLE public.account_parameters_history (
 );
 
 CREATE TABLE public.account_limit (
-	account_id     int4          NOT NULL,
-	limit_category varchar(100)  NOT NULL,
+	account_id     int4          NULL,
+	limit_category varchar(100)  NULL,
 	limit_value    numeric       NULL,
-	CONSTRAINT account_limit_pkey PRIMARY KEY (account_id, limit_category)
+	CONSTRAINT account_limit_account_id_limit_category_key UNIQUE (account_id, limit_category)
 );
 
 CREATE TABLE public.account_limit_history (
 	id serial4 NOT NULL,
-	account_id int4 NOT NULL,
-	limit_category varchar(50) NOT NULL,
+	account_id int4 NULL,
+	limit_category varchar(50) NULL,
 	limit_value numeric NULL,
-	valid_from timestamp NOT NULL,
-	archived_at timestamp DEFAULT now() NOT NULL
+	valid_from timestamp NULL,
+	archived_at timestamp DEFAULT now() NULL,
+	CONSTRAINT account_limit_history_pkey PRIMARY KEY (id)
 );
 
 CREATE TABLE public.portfolio_info (
@@ -235,7 +237,8 @@ CREATE TABLE public.bond_info (
 	"DatedDate" date NULL,
 	"FirstInterestPayment" date NULL,
 	"AddDate" date NULL,
-	"UpdateDate" date NULL
+	"UpdateDate" date NULL,
+	"BondType" varchar(20) NULL
 );
 
 CREATE TABLE public.bond_price (
@@ -286,9 +289,6 @@ CREATE TABLE public.treasury_yield (
 CREATE TABLE public.current_security (
 	"SecurityID" varchar(20) NOT NULL,
 	"SecurityName" varchar(200) NULL,
-	"Currency" varchar(20) NULL,
-	"AssetClass" varchar(20) NOT NULL,
-	"AssetType" varchar(20) NOT NULL,
 	"ISIN" varchar(20) NULL,
 	"CUSIP" varchar(20) NULL,
 	"BB_UNIQUE" varchar(20) NULL,
@@ -678,6 +678,7 @@ CREATE TABLE public.port_position_var (
 	es_99 numeric NULL,
 	mg_var_99 numeric NULL,
 	mg_es_99 numeric NULL,
+	broker text NULL,
 	CONSTRAINT port_position_var_pkey PRIMARY KEY (port_id, pos_id),
 	CONSTRAINT port_position_var_port_id_fkey FOREIGN KEY (port_id) REFERENCES public.portfolio_info(port_id)
 );
@@ -765,6 +766,7 @@ CREATE TABLE public.security_xref (
 	"SecurityID" varchar(20) NULL,
 	"DataSource" varchar(100) NULL,
 	"DateAdded" date DEFAULT CURRENT_DATE NOT NULL,
+	"ExchCode" varchar(10) NULL,
 	CONSTRAINT security_xref_pkey PRIMARY KEY (id)
 );
 
@@ -800,12 +802,11 @@ CREATE TABLE public.option_info (
 CREATE TABLE IF NOT EXISTS public.account (
     account_id        SERIAL       PRIMARY KEY,
     account_name      VARCHAR(120) NOT NULL,
-    short_name        VARCHAR(20)  NULL,
+    short_name        TEXT         NULL,
     owner_id          INT          NOT NULL,
     client_id         INT          NOT NULL,
     parent_account_id INT          DEFAULT NULL REFERENCES public.account(account_id),
-    create_time       TIMESTAMP    DEFAULT NOW(),
-    next_run_time     TIMESTAMP    NULL
+    create_time       TIMESTAMP    DEFAULT NOW()
 );
 
 CREATE TABLE IF NOT EXISTS public.db_mv_history (
@@ -904,15 +905,15 @@ CREATE TABLE IF NOT EXISTS public.proc_positions (
     account_id      INT       NOT NULL,
     position_id     TEXT      NOT NULL,
     security_id     TEXT      NOT NULL,
-    security_name   TEXT      NOT NULL,
-    isin            TEXT      NOT NULL,
-    cusip           TEXT      NOT NULL,
-    ticker          TEXT      NOT NULL,
+    security_name   TEXT      NULL,
+    isin            TEXT      NULL,
+    cusip           TEXT      NULL,
+    ticker          TEXT      NULL,
     quantity        FLOAT     NULL,
     market_value    FLOAT     NULL,
     asset_class     TEXT      NULL,
-    currency        TEXT      NOT NULL,
-    broker_account  TEXT      NOT NULL,
+    currency        TEXT      NULL,
+    broker_account  TEXT      NULL,
     broker          TEXT      NULL,
     insert_time     TIMESTAMP NOT NULL DEFAULT NOW(),
     last_price      NUMERIC   NULL,
@@ -922,7 +923,7 @@ CREATE TABLE IF NOT EXISTS public.proc_positions (
 );
 
 CREATE TABLE IF NOT EXISTS public.mssb_posit (
-    feed_date                    DATE     NULL,
+    feed_date                    DATE     NOT NULL,
     routing_code                 TEXT     NULL,
     account                      TEXT     NULL,
     cusip                        TEXT     NULL,
@@ -967,15 +968,15 @@ CREATE TABLE IF NOT EXISTS public.proc_positions_hist (
     account_id      INT       NOT NULL,
     position_id     TEXT      NOT NULL,
     security_id     TEXT      NOT NULL,
-    security_name   TEXT      NOT NULL,
-    isin            TEXT      NOT NULL,
-    cusip           TEXT      NOT NULL,
-    ticker          TEXT      NOT NULL,
+    security_name   TEXT      NULL,
+    isin            TEXT      NULL,
+    cusip           TEXT      NULL,
+    ticker          TEXT      NULL,
     quantity        FLOAT     NULL,
     market_value    FLOAT     NULL,
     asset_class     TEXT      NULL,
-    currency        TEXT      NOT NULL,
-    broker_account  TEXT      NOT NULL,
+    currency        TEXT      NULL,
+    broker_account  TEXT      NULL,
     broker          TEXT      NULL,
     insert_time     TIMESTAMP NOT NULL DEFAULT NOW(),
     archived_at     TIMESTAMP NOT NULL DEFAULT NOW(),
@@ -1121,7 +1122,8 @@ CREATE TABLE IF NOT EXISTS public.benchmark (
     is_custom             BOOLEAN      NOT NULL DEFAULT FALSE,
     create_date           DATE         NOT NULL DEFAULT current_date,
     security_id           VARCHAR(20)  NULL,
-    is_active             BOOLEAN      NOT NULL DEFAULT TRUE
+    is_active             BOOLEAN      DEFAULT TRUE,
+    expect_return         FLOAT8       NULL
 );
 
 CREATE TABLE IF NOT EXISTS public.benchmark_weights (
@@ -1244,6 +1246,7 @@ CREATE TABLE IF NOT EXISTS public.account_positions (
 	asset_class varchar(50) NULL,
 	currency varchar(20) NULL,
 	insert_time date NULL DEFAULT CURRENT_DATE,
+	security_id varchar(20) NULL,
 	CONSTRAINT account_positions_pkey PRIMARY KEY (id)
 );
 
