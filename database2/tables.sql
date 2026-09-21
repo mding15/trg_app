@@ -1222,3 +1222,165 @@ CREATE TABLE IF NOT EXISTS public.slide_shocks (
     shock      NUMERIC     NOT NULL,
     UNIQUE (slide_name, shock)
 );
+
+-- ---------------------------------------------------------------
+-- Tables migrated from database/postgres_tables.sql (2026-09-21)
+-- Tables already superseded by newer definitions above (client, account,
+-- portfolio_info, port_positions, port_parameters, current_security) or
+-- renamed/redesigned (security_attribute, limit_var, limit_concentration,
+-- private_equity, account_run_parameters) were intentionally left out.
+-- ---------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS public.account_positions (
+	id serial4 NOT NULL,
+	account_id int4 NOT NULL,
+	position_id varchar(20) NOT NULL,
+	security_name varchar(200) NULL,
+	isin varchar(20) NULL,
+	cusip varchar(20) NULL,
+	ticker varchar(20) NULL,
+	quantity numeric NOT NULL,
+	market_value numeric NOT NULL,
+	asset_class varchar(50) NULL,
+	currency varchar(20) NULL,
+	insert_time date NULL DEFAULT CURRENT_DATE,
+	CONSTRAINT account_positions_pkey PRIMARY KEY (id)
+);
+
+CREATE TABLE IF NOT EXISTS public.upload_security (
+	upload_id SERIAL PRIMARY KEY,
+	upload_name varchar(100) NOT NULL,
+	filename varchar(100) NULL,
+	result_filename varchar(100) NULL,
+	err_filename varchar(100) NULL,
+	status varchar(20) NULL,
+	message varchar(200) NULL,
+	created_by varchar(50) NULL,
+	created_user_id int4 NULL,
+	create_date TIMESTAMP default NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.yh_stock_profile (
+	ticker varchar(20) NULL,
+	address1 varchar(500) NULL,
+	city varchar(50) NULL,
+	"state" varchar(50) NULL,
+	zip varchar(50) NULL,
+	country varchar(50) NULL,
+	phone varchar(20) NULL,
+	website varchar(500) NULL,
+	industry varchar(500) NULL,
+	industrykey varchar(500) NULL,
+	industrydisp varchar(500) NULL,
+	sector varchar(500) NULL,
+	sectorkey varchar(500) NULL,
+	sectordisp varchar(500) NULL,
+	longbusinesssummary varchar(10000) NULL,
+	fulltimeemployees numeric NULL,
+	auditrisk numeric NULL,
+	boardrisk numeric NULL,
+	compensationrisk numeric NULL,
+	shareholderrightsrisk numeric NULL,
+	governanceepochdate numeric NULL,
+	compensationasofepochdate numeric NULL,
+	irwebsite varchar(500) NULL,
+	maxage numeric NULL,
+	overallrisk numeric NULL
+);
+
+CREATE TABLE IF NOT EXISTS public.yh_stock_price (
+	ticker varchar(20) NULL,
+	"date" date NULL,
+	"open" numeric NULL,
+	high numeric NULL,
+	low numeric NULL,
+	"close" numeric NULL,
+	volume numeric NULL
+);
+
+CREATE TABLE IF NOT EXISTS public.yh_stock_dividend (
+    symbol               varchar(100) NOT NULL,
+    "companyName"        varchar(100) NULL,
+    "dividend_Ex_Date"   date NOT NULL,
+    "payment_Date"       date NULL,
+    "record_Date"        date NULL,
+    "dividend_Rate"      numeric NOT NULL,
+    "indicated_Annual_Dividend"   numeric NULL,
+    "announcement_Date"  date NULL,
+    CONSTRAINT unique_symbol_date UNIQUE (symbol, "dividend_Ex_Date")
+);
+
+CREATE TABLE IF NOT EXISTS public.current_price (
+	"SecurityID"	 varchar(20) NOT NULL,
+	"Ticker"         varchar(20) NOT NULL,
+	"Date"           date NOT NULL,
+	"Open"           numeric NULL,
+	"High"           numeric NULL,
+	"Low"            numeric NULL,
+	"Close"          numeric NULL,
+	"Volume"         numeric NULL,
+	"PriceTime"      timestamp NOT NULL,
+	CONSTRAINT unique_price_entry UNIQUE ("SecurityID", "Date")
+);
+
+CREATE TABLE IF NOT EXISTS public.risk_model (
+    model_id         SERIAL PRIMARY KEY,
+	model_name       varchar(50) NOT NULL,
+	description      varchar(200) NOT NULL,
+	is_current       INTEGER DEFAULT 0,
+	create_date      timestamp default NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.risk_factor (
+    model_id         INTEGER NOT NULL,
+	"SecurityID"	 varchar(20) NOT NULL,
+	"Category"       varchar(20) NOT NULL,
+	"RF_ID"          varchar(20) NOT NULL,
+	"Sensitivity"    numeric NULL,
+	CONSTRAINT unique_entry UNIQUE (model_id, "SecurityID", "Category")
+);
+
+CREATE TABLE IF NOT EXISTS public.parameters (
+    param_id SERIAL PRIMARY KEY,
+	param_name   varchar(100) NOT NULL,
+	str_value    varchar(100) NULL,
+	date_value   date NULL,
+	float_value  float NULL
+);
+
+-- Note: source file defined mkt_data_price twice, the second copy missing
+-- a table name (syntax error) -- only the valid definition is kept here.
+CREATE TABLE IF NOT EXISTS public.mkt_data_price (
+	security_id varchar(20) NOT NULL,
+	price_date  date NOT NULL,
+	price       numeric    NULL,
+    CONSTRAINT unique_mkt_data_price UNIQUE (security_id, price_date)
+);
+CREATE INDEX IF NOT EXISTS idx_security_id ON public.mkt_data_price (security_id);
+
+-- Note: source file had a stray double comma after "Source" (syntax error), fixed here.
+CREATE TABLE IF NOT EXISTS public.mkt_data_source (
+    id               SERIAL PRIMARY KEY,
+    "SecurityID"	 varchar(20)	NOT NULL,
+    "SecurityName"	 varchar(200)	NOT NULL,
+    "Source"	     varchar(20)	NOT NULL,
+    "SourceID"	     varchar(50)	NOT NULL,
+    is_active	     int          	NOT NULL,
+    update_time      timestamp default NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.dividend (
+    id           SERIAL PRIMARY KEY,
+    ticker     	 varchar(20)	NOT NULL,
+    ex_date      date NOT NULL,
+    amount       float NULL
+);
+
+CREATE TABLE IF NOT EXISTS public.risk_limit_level (
+	id serial4 NOT NULL,
+	risk_type varchar(20) NOT NULL,
+	category varchar(20) NULL,
+	low float4 NULL,
+	mid float4 NULL,
+	high float4 NULL
+);
