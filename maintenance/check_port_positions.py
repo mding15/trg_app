@@ -62,7 +62,7 @@ _POSITION_COLS = [
 # strike/tenor/underlying since those are known even though pricing was
 # skipped; ratio/theo_mv/rate stay blank only where genuinely not computed.
 _OPTION_DETAIL_COLS = [
-    'ratio', 'provided_mv', 'theo_mv',
+    'ratio', 'provided_mv', 'theo_mv', 'quantity',
     'underlying_security_id', 'underlying_price',
     'strike', 'tenor', 'rate', 'vol',
 ]
@@ -136,7 +136,7 @@ def check_option_market_value(positions: pd.DataFrame, as_of_date, log: logging.
     flags += [
         _flag(r, 'option_missing_pricing_inputs',
               'OptionStrike/MaturityDate/UnderlyingSecurityID/Quantity not all present',
-              provided_mv=_num(r['MarketValue']),
+              provided_mv=_num(r['MarketValue']), quantity=_num(r['Quantity']),
               underlying_security_id=r['UnderlyingSecurityID'] if pd.notna(r['UnderlyingSecurityID']) else None,
               strike=_num(r['OptionStrike']), vol=OPTION_VOL)
         for _, r in missing_inputs.iterrows()
@@ -150,7 +150,8 @@ def check_option_market_value(positions: pd.DataFrame, as_of_date, log: logging.
     matured = options[matured_mask]
     flags += [
         _flag(r, 'option_matured', f'Already matured as of {as_of_date}',
-              provided_mv=_num(r['MarketValue']), underlying_security_id=r['UnderlyingSecurityID'],
+              provided_mv=_num(r['MarketValue']), quantity=_num(r['Quantity']),
+              underlying_security_id=r['UnderlyingSecurityID'],
               strike=_num(r['OptionStrike']), tenor=float(t), vol=OPTION_VOL)
         for (_, r), t in zip(matured.iterrows(), tenor[matured_mask])
     ]
@@ -164,6 +165,7 @@ def check_option_market_value(positions: pd.DataFrame, as_of_date, log: logging.
 
     for (idx, row), t in zip(options.iterrows(), tenor):
         provided_mv = _num(row['MarketValue'])
+        quantity = _num(row['Quantity'])
         underlying_id = row['UnderlyingSecurityID']
         strike = _num(row['OptionStrike'])
 
@@ -172,7 +174,7 @@ def check_option_market_value(positions: pd.DataFrame, as_of_date, log: logging.
             flags.append(_flag(
                 row, 'option_no_underlying_price',
                 f"No current_price found for underlying {underlying_id} on/before {as_of_date}",
-                provided_mv=provided_mv, underlying_security_id=underlying_id,
+                provided_mv=provided_mv, quantity=quantity, underlying_security_id=underlying_id,
                 strike=strike, tenor=float(t), vol=OPTION_VOL,
             ))
             continue
@@ -182,7 +184,8 @@ def check_option_market_value(positions: pd.DataFrame, as_of_date, log: logging.
         except ValueError as e:
             flags.append(_flag(
                 row, 'option_no_risk_free_rate', str(e),
-                provided_mv=provided_mv, underlying_security_id=underlying_id, underlying_price=S,
+                provided_mv=provided_mv, quantity=quantity,
+                underlying_security_id=underlying_id, underlying_price=S,
                 strike=strike, tenor=float(t), vol=OPTION_VOL,
             ))
             continue
@@ -193,7 +196,7 @@ def check_option_market_value(positions: pd.DataFrame, as_of_date, log: logging.
         if not theo_mv or np.isnan(theo_mv):
             flags.append(_flag(
                 row, 'option_zero_theoretical_mv', f'theoretical_mv={theo_mv}',
-                provided_mv=provided_mv, theo_mv=theo_mv,
+                provided_mv=provided_mv, theo_mv=theo_mv, quantity=quantity,
                 underlying_security_id=underlying_id, underlying_price=S,
                 strike=strike, tenor=float(t), rate=r, vol=OPTION_VOL,
             ))
@@ -202,7 +205,8 @@ def check_option_market_value(positions: pd.DataFrame, as_of_date, log: logging.
         if provided_mv is None:
             flags.append(_flag(
                 row, 'option_missing_pricing_inputs', 'MarketValue is missing',
-                theo_mv=theo_mv, underlying_security_id=underlying_id, underlying_price=S,
+                theo_mv=theo_mv, quantity=quantity,
+                underlying_security_id=underlying_id, underlying_price=S,
                 strike=strike, tenor=float(t), rate=r, vol=OPTION_VOL,
             ))
             continue
@@ -213,7 +217,7 @@ def check_option_market_value(positions: pd.DataFrame, as_of_date, log: logging.
                 row, 'option_mv_ratio_out_of_range',
                 f'ratio={ratio:.3f}  provided_mv={provided_mv:.2f}  theoretical_mv={theo_mv:.2f}  '
                 f'(underlying={S}, strike={strike}, tenor={t:.3f}, rate={r:.4f}, vol={OPTION_VOL})',
-                ratio=ratio, provided_mv=provided_mv, theo_mv=theo_mv,
+                ratio=ratio, provided_mv=provided_mv, theo_mv=theo_mv, quantity=quantity,
                 underlying_security_id=underlying_id, underlying_price=S,
                 strike=strike, tenor=float(t), rate=r, vol=OPTION_VOL,
             ))
