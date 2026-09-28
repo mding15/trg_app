@@ -29,13 +29,13 @@ review and load with maintenance/insert_new_security.py (Step 2). It has
 one extra column, occ_ticker (True if ticker is a valid OCC option symbol),
 right after ticker; Step 2 ignores it.
 
-If any positions are options (SecurityID found in option_info), also writes
-data/maintenance/CSV/<input_stem>_options_<timestamp>.csv — input for
-maintenance/calc_options.py, to check the options' market values:
+If any positions are options (asset_class 'Derivative', asset_type 'Option'),
+also writes data/maintenance/CSV/<input_stem>_options_<timestamp>.csv — input
+for maintenance/calc_options.py, to check the options' market values:
     pos_id, as_of_date, security_id, security_name, quantity, market_value
         (from the Positions sheet),
     option_type, option_class, maturity, strike, underlying, underlying_sec_id
-        (from option_info)
+        (from option_info; blank if the position has no option_info row)
 
 Usage:
     python maintenance/calc_portfolio_var.py                        # input_template.xlsx
@@ -183,13 +183,19 @@ _OPTION_INFO_COLS = ['option_type', 'option_class', 'maturity', 'strike', 'under
 
 
 def _option_positions(rows: pd.DataFrame) -> pd.DataFrame:
-    """Positions (active + excluded) whose security_id is in option_info, with
-    contract details from option_info — input rows for maintenance/calc_options.py.
+    """Option positions (asset_class 'Derivative', asset_type 'Option'; active +
+    excluded) with contract details from option_info — input rows for
+    maintenance/calc_options.py. Option-info columns are blank for positions
+    with no option_info row (or no security_id).
     """
     from database2 import pg_connection
 
+    pos = rows.loc[(rows['asset_class'] == 'Derivative') & (rows['asset_type'] == 'Option'),
+                   _OPTION_POS_COLS].copy()
+    pos['security_id'] = pos['security_id'].map(lambda s: str(s) if pd.notna(s) else None)
+
     info = pd.DataFrame(columns=['security_id'] + _OPTION_INFO_COLS)
-    sec_ids = rows['security_id'].dropna().astype(str).unique().tolist()
+    sec_ids = pos['security_id'].dropna().unique().tolist()
     if sec_ids:
         with pg_connection() as conn:
             with conn.cursor() as cur:
@@ -204,8 +210,7 @@ def _option_positions(rows: pd.DataFrame) -> pd.DataFrame:
                 )
                 info = pd.DataFrame(cur.fetchall(), columns=['security_id'] + _OPTION_INFO_COLS)
 
-    pos = rows.loc[rows['security_id'].notna(), _OPTION_POS_COLS].astype({'security_id': str})
-    return pos.merge(info, on='security_id', how='inner')[_OPTION_POS_COLS + _OPTION_INFO_COLS]
+    return pos.merge(info, on='security_id', how='left')[_OPTION_POS_COLS + _OPTION_INFO_COLS]
 
 
 # ── Core logic ────────────────────────────────────────────────────────────────
@@ -256,8 +261,13 @@ def run(file_name: str, asof_date: date | None) -> Path:
         opt_path = CSV_DIR / f'{in_path.stem}_options_{timestamp}.csv'
         options.to_csv(opt_path, index=False)
         log.info(f'{len(options)} option position(s) written to {opt_path} (input for maintenance/calc_options.py)')
+        missing = options[options['option_type'].isna()]
+        if not missing.empty:
+            log.warning(f'  {len(missing)} option position(s) have no option_info row — blank in the CSV:')
+            for _, r in missing.iterrows():
+                log.warning(f"    pos_id={r['pos_id']}  security_id={r['security_id']}  {r['security_name']}")
     else:
-        log.info('No option positions (none of the SecurityIDs are in option_info) — options CSV not written.')
+        log.info("No option positions (asset_class 'Derivative', asset_type 'Option') — options CSV not written.")
 
     if not new_secs.empty:
         from security.new_security import write_csv, _TYPE_HANDLERS
