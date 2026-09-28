@@ -21,7 +21,7 @@ Rows that can't be priced (matured, missing inputs, no underlying price, no
 rate) keep blank results and a reason in the `status` column.
 
 Read-only: never writes to the database. Results are written to
-data/maintenance/Excel/<input_stem>_priced_<timestamp>.xlsx.
+data/maintenance/CSV/<input_stem>_priced_<timestamp>.csv.
 
 Usage:
     python maintenance/calc_options.py                          # newest *_options_*.csv, date from proc_asof_date
@@ -43,10 +43,9 @@ from database2 import get_proc_asof_date
 from engine import eq_option_var as opt
 from models.ust_curve import get_rate
 from mkt_data.price_timeseries import get_current_price
-from _paths import CSV_DIR, EXCEL_DIR
+from _paths import CSV_DIR
 
 DEFAULT_PATTERN = '*_options_*.csv'
-OUT_SHEET       = 'options'
 
 _DEFAULT_IV = {'SPY': 0.25, 'QQQ': 0.25, 'VIX': 1.2}
 _DEFAULT_IV_OTHER = 0.35
@@ -71,7 +70,9 @@ def _setup_logger() -> logging.Logger:
 
 
 def _latest_options_csv() -> Path:
-    files = sorted(CSV_DIR.glob(DEFAULT_PATTERN), key=lambda f: f.stat().st_mtime)
+    # Skip this script's own output (<input_stem>_priced_<timestamp>.csv also matches the pattern)
+    files = sorted((f for f in CSV_DIR.glob(DEFAULT_PATTERN) if '_priced_' not in f.name),
+                   key=lambda f: f.stat().st_mtime)
     if not files:
         raise FileNotFoundError(f'No {DEFAULT_PATTERN} in {CSV_DIR} — run maintenance/calc_portfolio_var.py first')
     return files[-1]
@@ -178,8 +179,9 @@ def run(file_name: str | None, as_of_date: date | None) -> None:
         log.warning(f'{len(failed)} option(s) not priced — see status column.')
 
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    out_path = EXCEL_DIR / f'{in_path.stem}_priced_{timestamp}.xlsx'
-    priced.to_excel(out_path, sheet_name=OUT_SHEET, index=False)
+    CSV_DIR.mkdir(parents=True, exist_ok=True)
+    out_path = CSV_DIR / f'{in_path.stem}_priced_{timestamp}.csv'
+    priced.to_csv(out_path, index=False)
     log.info('─' * 60)
     log.info(f'Results written to {out_path}')
 
