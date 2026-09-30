@@ -75,7 +75,7 @@
     "script_path": "api/trgapp/process2/calc_derivative_pnl.py",
     "script_type": "python",
     "schedule_time": null,
-    "dependencies": ["pnl_bond", "consolidate_positions", "yh_eod_price", "tr_extract"],
+    "dependencies": ["pnl_bond", "consolidate_positions", "yh_eod_price", "tr_extract", "calc_option_price"],
     "max_retries": 2,
     "retry_delay_seconds": 60,
     "enabled": true,
