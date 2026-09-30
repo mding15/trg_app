@@ -815,6 +815,31 @@ CREATE TABLE public.option_iv (
 );
 
 -- ---------------------------------------------------------------
+-- option_price  (option prices per as_of_date, process2/calc_option_price.py)
+-- price_source 'mssb': implied from MSSB market_value/quantity (price only).
+-- price_source 'model': Black-Scholes with iv from option_iv; model inputs kept.
+-- Prices are per share (no x100 contract multiplier).
+-- ---------------------------------------------------------------
+CREATE TABLE public.option_price (
+	as_of_date date NOT NULL,
+	security_id varchar(20) NOT NULL,
+	price numeric NOT NULL,
+	price_source varchar(20) NOT NULL,        -- mssb | model
+	option_type varchar(20) NULL,
+	strike numeric NULL,
+	maturity date NULL,
+	underlying_sec_id varchar(20) NULL,
+	underlying_price numeric NULL,
+	moneyness numeric NULL,                   -- K/S
+	tenor_years numeric NULL,
+	iv numeric NULL,
+	iv_date date NULL,                        -- option_iv as_of_date used
+	risk_free_rate numeric NULL,
+	created_at timestamp DEFAULT now() NOT NULL,
+	CONSTRAINT option_price_pkey PRIMARY KEY (as_of_date, security_id)
+);
+
+-- ---------------------------------------------------------------
 -- Tables migrated from create_tables.py (2026-07-06)
 -- ---------------------------------------------------------------
 

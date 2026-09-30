@@ -250,6 +250,20 @@
   },
 
   {
+    "id": "calc_option_price",
+    "name": "Calculate Option Prices",
+    "description": "Price all option securities in proc_positions (MSSB-implied or Black-Scholes with option_iv) into option_price.",
+    "script_path": "api/trgapp/process2/calc_option_price.py",
+    "script_type": "python",
+    "schedule_time": null,
+    "dependencies": ["consolidate_positions", "load_option_iv", "tr_extract"],
+    "max_retries": 2,
+    "retry_delay_seconds": 60,
+    "enabled": true,
+    "venv_path": null
+  },
+
+  {
     "id": "dashboard_process",
     "name": "Dashboard Process",
     "description": "Run daily dashboard computation process.",
