@@ -102,6 +102,18 @@ def purge_pnl_stat(cutoff_days: int = 31) -> int:
     return deleted
 
 
+def pnl_stat_rows(stats: pd.DataFrame, as_of_date, pnl_type: str) -> pd.DataFrame:
+    """security_pnl_stat rows (DB column names) from a dist_stat() DataFrame. No DB access."""
+    as_of = pd.to_datetime(as_of_date).date() if not isinstance(as_of_date, date) else as_of_date
+
+    df = stats.rename(columns=_COL_MAP).copy()
+    df.index.name = 'security_id'
+    df = df.reset_index()
+    df['as_of_date'] = as_of
+    df['pnl_type']   = pnl_type
+    return df[[c for c in _DB_COLS if c in df.columns]]
+
+
 def save_pnl_stat(stats: pd.DataFrame, as_of_date, pnl_type: str) -> int:
     """
     Upsert security_pnl_stat rows for (as_of_date, pnl_type).
@@ -115,16 +127,7 @@ def save_pnl_stat(stats: pd.DataFrame, as_of_date, pnl_type: str) -> int:
     if stats.empty:
         return 0
 
-    as_of = pd.to_datetime(as_of_date).date() if not isinstance(as_of_date, date) else as_of_date
-
-    df = stats.rename(columns=_COL_MAP).copy()
-    df.index.name = 'security_id'
-    df = df.reset_index()
-    df['as_of_date'] = as_of
-    df['pnl_type']   = pnl_type
-    df = df[[c for c in _DB_COLS if c in df.columns]]
-
-    rows = df.to_dict(orient='records')
+    rows = pnl_stat_rows(stats, as_of_date, pnl_type).to_dict(orient='records')
 
     with pg_connection() as conn:
         with conn.cursor() as cur:
@@ -194,6 +197,19 @@ _SENS_DB_COLS = [
 ]
 
 
+def security_sensitivity_rows(securities: pd.DataFrame, as_of_date) -> pd.DataFrame:
+    """security_sensitivity rows (DB column names, absent sensitivities None). No DB access."""
+    as_of = pd.to_datetime(as_of_date).date() if not isinstance(as_of_date, date) else as_of_date
+
+    df = securities.rename(columns=_SENS_COL_MAP)
+
+    for col in _SENS_DB_COLS:
+        if col not in df.columns:
+            df[col] = None
+    df['as_of_date'] = as_of
+    return df[_SENS_DB_COLS]
+
+
 def save_security_sensitivity(securities: pd.DataFrame, as_of_date) -> int:
     """
     Upsert security_sensitivity rows from a security analytics DataFrame.
@@ -213,16 +229,7 @@ def save_security_sensitivity(securities: pd.DataFrame, as_of_date) -> int:
     if securities.empty:
         return 0
 
-    as_of = pd.to_datetime(as_of_date).date() if not isinstance(as_of_date, date) else as_of_date
-
-    df = securities.rename(columns=_SENS_COL_MAP)
-
-    for col in _SENS_DB_COLS:
-        if col not in df.columns:
-            df[col] = None
-    df['as_of_date'] = as_of
-
-    rows = df[_SENS_DB_COLS].to_dict(orient='records')
+    rows = security_sensitivity_rows(securities, as_of_date).to_dict(orient='records')
 
     with pg_connection() as conn:
         with conn.cursor() as cur:

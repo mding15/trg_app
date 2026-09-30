@@ -8,7 +8,8 @@ Pipeline:
     2c. Enrich positions with security attributes via update_security_info().
     2d. Fill/update prices via update_position_price(); split active vs excluded.
     3.  Run VaR engine on active positions.
-    4.  Build results DataFrame.
+    4.  Build results DataFrame; exclude active positions with no VaR
+        ('no market value' / 'no pnl distribution').
     5.  Re-attach excluded positions with NULL VaR columns.
     6.  Add beta column.
     7.  Insert into port_position_var.
@@ -60,6 +61,8 @@ def compute_portfolio_var(file_path: Path, asof_date=None) -> tuple[dict, pd.Dat
         params    — parameters as read (AsofDate replaced if asof_date given).
         positions — enriched positions, all rows (active + excluded).
         result    — positions with VaR metrics and beta; excluded rows have NULL VaR.
+                    Unlike positions, result also marks active positions the
+                    engine produced no VaR for as excluded.
     """
     # Deferred to avoid circular imports: update_position_price → mkt_timeseries
     # → db_utils → api → routes → upload_portfolio → this module
@@ -105,6 +108,19 @@ def compute_portfolio_var(file_path: Path, asof_date=None) -> tuple[dict, pd.Dat
 
     # ── 4. Merge metrics back onto active positions ───────────────────────────
     result = active.set_index('pos_id').join(var_metrics, how='left').reset_index()
+
+    # ── 4b. Exclude active positions the engine could not compute VaR for ────
+    # calc_var() leaves metrics NaN when MarketValue is missing or the
+    # SecurityID has no column in the PnL distribution file.
+    no_var = result['var_95'].isna()
+    no_mv  = pd.to_numeric(result['MarketValue'], errors='coerce').isna()
+    result.loc[no_var, 'excluded']               = True
+    result.loc[no_var & no_mv, 'exclude_reason']  = 'no market value'
+    result.loc[no_var & ~no_mv, 'exclude_reason'] = 'no pnl distribution'
+    if no_var.any():
+        logger.warning(f'{no_var.sum()} active position(s) have no VaR → excluded '
+                       f'({(no_var & no_mv).sum()} no market value, '
+                       f'{(no_var & ~no_mv).sum()} no pnl distribution)')
 
     # ── 5. Re-attach excluded positions with NULL VaR columns ─────────────────
     if not excluded.empty:

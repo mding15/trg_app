@@ -147,7 +147,7 @@ Step 4b — Cash override
 
 Step 4c — Implied price
   If LastPrice is still NULL after steps 4a/4b but Quantity is known:
-    LastPrice = MarketValue / Quantity
+    LastPrice = |MarketValue| / |Quantity|   (absolute values: shorts can be negative)
   This handles positions where the feed provides market value but no price
   (common for certain alternative / OTC instruments).
   Note: MarketValue recalculation (Quantity × LastPrice) is intentionally

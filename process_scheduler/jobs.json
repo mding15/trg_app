@@ -14,13 +14,27 @@
   },
 
   {
+    "id": "update_current_security",
+    "name": "Update Current Security",
+    "description": "Add securities held in proc_positions (latest date per account) that are missing from current_security.",
+    "script_path": "api/trgapp/process2/update_current_security.py",
+    "script_type": "python",
+    "schedule_time": null,
+    "dependencies": ["consolidate_positions"],
+    "max_retries": 2,
+    "retry_delay_seconds": 60,
+    "enabled": true,
+    "venv_path": null
+  },
+
+  {
     "id": "pnl_linear_prod",
     "name": "Linear Products PnL",
     "description": "Calculates PnL for linear products",
     "script_path": "api/trgapp/process2/calc_linear_product_pnl.py",
     "script_type": "python",
     "schedule_time": null,
-    "dependencies": ["as_of_date"],
+    "dependencies": ["as_of_date", "update_current_security"],
     "max_retries": 2,
     "retry_delay_seconds": 60,
     "enabled": true,

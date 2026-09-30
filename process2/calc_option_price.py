@@ -6,8 +6,9 @@ Steps:
     1. Option securities: proc_positions joined to security_info with
        AssetClass='Derivative', AssetType='Option'.
     2. MSSB prices: for securities fed from MSSB (feed_source='mssb',
-       asset_class='OP'), price = sum(market_value) / sum(quantity) * 0.01
-       (MSSB market value is per contract; x0.01 gives per share).
+       asset_class='OP'), price = sum(|market_value|) / sum(|quantity|) * 0.01
+       (MSSB market value is per contract; x0.01 gives per share; absolute
+       values so short positions give a positive price).
        Only securities from step 1 are kept.
     3. Model prices for step-1 securities without an MSSB price — Black-Scholes
        (engine/eq_option_var.py::calc_price) with:
@@ -79,7 +80,7 @@ def _get_mssb_prices(cur, as_of_date) -> pd.Series:
     cur.execute(
         """
         SELECT pp.security_id,
-               SUM(pp.market_value) / NULLIF(SUM(pp.quantity), 0) * 0.01 AS price
+               SUM(ABS(pp.market_value)) / NULLIF(SUM(ABS(pp.quantity)), 0) * 0.01 AS price
         FROM proc_positions pp
         WHERE pp.as_of_date = %s
           AND pp.feed_source = 'mssb'

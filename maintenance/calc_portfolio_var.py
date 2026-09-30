@@ -16,7 +16,8 @@ so any attempted write fails instead of reaching the database.
 Output: data/maintenance/Excel/<input_stem>_var_<timestamp>.xlsx
     Positions  — port_position_var rows (active + excluded), DB column names
     Parameters — parameters as read (AsofDate reflects --date if given)
-    Summary    — counts, total market value, portfolio std/VaR/ES
+    Summary    — counts (excluded broken down by exclude_reason), total
+                 market value, portfolio std/VaR/ES
                  (portfolio figures = sum of per-position marginal values,
                  which add up exactly to the portfolio total)
     New Securities — input '1. Positions' rows (all original columns) whose
@@ -28,6 +29,13 @@ Step 1 of the new-security workflow (security/new_security.py), ready to
 review and load with maintenance/insert_new_security.py (Step 2). It has
 one extra column, occ_ticker (True if ticker is a valid OCC option symbol),
 right after ticker; Step 2 ignores it.
+
+If any positions are excluded, also writes
+data/maintenance/CSV/<input_stem>_excluded_<timestamp>.csv — one row per
+excluded position (sorted by exclude_reason, then pos_id):
+    pos_id, as_of_date, security_id, security_name, ticker, isin, cusip,
+    broker, broker_account, asset_class, asset_type, quantity, market_value,
+    last_price, maturity_date, exclude_reason
 
 If any positions are options (asset_class 'Derivative', asset_type 'Option'),
 also writes data/maintenance/CSV/<input_stem>_options_<timestamp>.csv — input
@@ -112,6 +120,10 @@ def _build_summary(file_path: Path, asof_date, positions: pd.DataFrame, rows: pd
         ('SecurityID Resolved',  int(rows['security_id'].notna().sum())),
         ('Active',               int((~excluded).sum())),
         ('Excluded',             int(excluded.sum())),
+    ]
+    reasons = rows.loc[excluded, 'exclude_reason'].fillna('(blank)').value_counts()
+    items += [(f'  Excluded: {reason}', int(n)) for reason, n in reasons.items()]
+    items += [
         ('No VaR (active)',      int(rows.loc[~excluded, 'var_95'].isna().sum())),
         ('Total Market Value',   float(mv)),
     ]
@@ -178,6 +190,20 @@ def _new_securities_csv_frame(new_secs: pd.DataFrame, asof_date) -> pd.DataFrame
     return df
 
 
+_EXCLUDED_COLS = ['pos_id', 'as_of_date', 'security_id', 'security_name', 'ticker', 'isin', 'cusip',
+                  'broker', 'broker_account', 'asset_class', 'asset_type', 'quantity', 'market_value',
+                  'last_price', 'maturity_date', 'exclude_reason']
+
+
+def _excluded_positions(rows: pd.DataFrame) -> pd.DataFrame:
+    """Excluded positions (excluded=True) with identifying columns and exclude_reason,
+    sorted by reason then pos_id."""
+    if 'excluded' not in rows.columns:
+        return pd.DataFrame(columns=_EXCLUDED_COLS)
+    excl = rows[rows['excluded'].fillna(False).astype(bool)]
+    return excl[[c for c in _EXCLUDED_COLS if c in excl.columns]].sort_values(['exclude_reason', 'pos_id'])
+
+
 _OPTION_POS_COLS = ['pos_id', 'as_of_date', 'security_id', 'security_name', 'quantity', 'market_value']
 _OPTION_INFO_COLS = ['option_type', 'option_class', 'maturity', 'strike', 'underlying', 'underlying_sec_id']
 
@@ -242,7 +268,7 @@ def run(file_name: str, asof_date: date | None) -> Path:
     log.info('─' * 60)
     for _, r in summary.iterrows():
         v = r['Value']
-        log.info(f"  {r['Item']:<22} {v:,.2f}" if isinstance(v, float) else f"  {r['Item']:<22} {v}")
+        log.info(f"  {r['Item']:<32} {v:,.2f}" if isinstance(v, float) else f"  {r['Item']:<32} {v}")
     if not new_secs.empty:
         log.warning(f'{len(new_secs)} position(s) with unresolved SecurityID — see "New Securities" tab.')
 
@@ -255,6 +281,15 @@ def run(file_name: str, asof_date: date | None) -> Path:
         new_secs.to_excel(writer, sheet_name='New Securities', index=False)
     log.info('─' * 60)
     log.info(f'Results written to {out_path}')
+
+    excluded = _excluded_positions(rows)
+    if not excluded.empty:
+        CSV_DIR.mkdir(parents=True, exist_ok=True)
+        excl_path = CSV_DIR / f'{in_path.stem}_excluded_{timestamp}.csv'
+        excluded.to_csv(excl_path, index=False)
+        log.info(f'{len(excluded)} excluded position(s) written to {excl_path}')
+    else:
+        log.info('No excluded positions — excluded CSV not written.')
 
     if not options.empty:
         CSV_DIR.mkdir(parents=True, exist_ok=True)

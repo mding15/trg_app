@@ -12,7 +12,7 @@ Steps:
          feed_source  = 'file_upload'
     6. Update last_price / last_price_date: bond_price (latest on/before as_of_date, for
        securities where security_info.AssetType IN ('Bond','Treasury')) wins over
-       current_price (exact date). Fallback: implied price (MarketValue / Quantity).
+       current_price (exact date). Fallback: implied price (|MarketValue| / |Quantity|).
     7. Recalculate market_value = quantity x last_price.
     8. Archive older rows to proc_positions_hist, delete same-date rows (feed_source='file_upload').
     9. Insert into proc_positions.
@@ -277,7 +277,7 @@ def process_tracked_positions(as_of_date, account_id=None, dry_run=False) -> int
                 price_type      = 'current_price'
                 priced_count += 1
             elif quantity and orig_mv and float(quantity) != 0:
-                last_price      = float(orig_mv) / float(quantity)
+                last_price      = abs(float(orig_mv)) / abs(float(quantity))
                 last_price_date = None
                 price_type      = 'implied'
                 implied_count += 1

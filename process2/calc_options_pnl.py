@@ -10,6 +10,8 @@ for the underlying equity and implied volatility (VIX):
     3. Compute implied volatility and Greeks (Delta, Gamma, Vega, Theta) per option.
     4. Re-price each option across underlying return and vol scenarios from the VaR HDF.
     5. Save one Series per security under 'PNL/{SecurityID}' in security_pnl.h5.
+       Options that cannot be priced (no IV, expired, no underlying price) are
+       skipped, and any PNL/{SecurityID} left from an earlier run is removed.
     6. Save sensitivities (IV, Delta, Gamma, Vega) to security_sensitivity.
        Note: Theta is computed but not yet persisted — add a 'theta' column to
        security_sensitivity and update _SENS_COL_MAP in db_pnl_stat.py to enable it.
@@ -40,6 +42,8 @@ from engine import eq_option_var as opt
 from models.ust_curve import get_rate as _ust_get_rate
 from process2.db_pnl_stat import save_pnl_stat, save_security_sensitivity
 
+PNL_FILE = config['VaR_DIR'] / 'security_pnl.h5'
+
 
 def _get_security_id_by_ticker(ticker: str) -> str | None:
     """Return SecurityID from security_xref for a given Ticker, or None if not found."""
@@ -52,6 +56,17 @@ def _get_security_id_by_ticker(ticker: str) -> str | None:
             )
             row = cur.fetchone()
     return row[0] if row else None
+
+
+def _remove_stale_pnl(security_ids: list[str], hdf_file) -> list[str]:
+    """Remove PNL/{SecurityID} from hdf_file for the given securities, if present.
+    Returns the IDs actually removed."""
+    with pd.HDFStore(hdf_file, mode='r') as store:
+        keys = set(store.keys())
+    stale = [sid for sid in security_ids if f'/PNL/{sid}' in keys]
+    if stale:
+        hdf_utils.remove(stale, 'PNL', hdf_file)
+    return stale
 
 
 def _get_option_securities(as_of_date) -> pd.DataFrame:
@@ -92,8 +107,9 @@ def _get_option_securities(as_of_date) -> pd.DataFrame:
 
 
 
-def _reprice_option(row: pd.Series, und_dist: pd.Series, vol_dist: pd.Series) -> pd.Series:
-    """Re-price one option across all scenarios. Returns P&L Series indexed by scenario."""
+def _reprice_option(row: pd.Series, und_dist: pd.Series, vol_dist: pd.Series) -> pd.Series | None:
+    """Re-price one option across all scenarios. Returns P&L Series indexed by scenario,
+    or None if the option can't be priced (no IV, expired, or no underlying price)."""
     S       = row['underlying_price']
     K       = float(row['strike'])
     T       = row['tenor']
@@ -103,7 +119,7 @@ def _reprice_option(row: pd.Series, und_dist: pd.Series, vol_dist: pd.Series) ->
     price0  = float(row['price'])
 
     if pd.isna(sigma) or sigma <= 0 or T <= 0 or pd.isna(S):
-        return pd.Series(np.zeros(len(und_dist)), index=und_dist.index)
+        return None
 
     # underlying return scenarios → new spot price
     S_scen = S * (1.0 + und_dist.values)
@@ -112,6 +128,19 @@ def _reprice_option(row: pd.Series, und_dist: pd.Series, vol_dist: pd.Series) ->
 
     prices = np.vectorize(opt.calc_price)(op_type, S_scen, K, T, r, sigma_scen)
     return pd.Series((prices - price0) / price0, index=und_dist.index)
+
+
+def load_option_scenarios(und_ids: list[str]) -> tuple[pd.DataFrame, pd.Series | None]:
+    """Scenario inputs for _reprice_option(): underlying price-return distributions
+    (scenarios × underlying SecurityID) and the VIX vol distribution (None if absent)."""
+    und_dists = var_utils.get_dist(und_ids, 'DELTA')
+
+    vix_sec_id = _get_security_id_by_ticker('VIX')
+    vix_dist = None
+    if vix_sec_id:
+        vix_dist_df = var_utils.get_dist([vix_sec_id], 'VEGA')
+        vix_dist = vix_dist_df[vix_sec_id] if vix_sec_id in vix_dist_df.columns else None
+    return und_dists, vix_dist
 
 
 def calc_options_pnl(as_of_date: date = None) -> pd.DataFrame:
@@ -163,16 +192,11 @@ def calc_options_pnl(as_of_date: date = None) -> pd.DataFrame:
     securities[['delta', 'gamma', 'vega', 'theta']] = [[*g] for g in greeks]
 
     # Step 4: Scenario distributions — per-underlying price returns + VIX vol returns
-    und_dists = var_utils.get_dist(und_ids, 'DELTA')
-
-    vix_sec_id = _get_security_id_by_ticker('VIX')
-    vix_dist = None
-    if vix_sec_id:
-        vix_dist_df = var_utils.get_dist([vix_sec_id], 'VEGA')
-        vix_dist = vix_dist_df[vix_sec_id] if vix_sec_id in vix_dist_df.columns else None
+    und_dists, vix_dist = load_option_scenarios(und_ids)
 
     # Step 5: Scenario P&L per security via BS re-pricing
     pnl_dict = {}
+    unpriced = []
     for _, row in securities.iterrows():
         und_id = row['underlying_sec_id']
         if und_id not in und_dists.columns:
@@ -180,7 +204,20 @@ def calc_options_pnl(as_of_date: date = None) -> pd.DataFrame:
             continue
         und_dist = und_dists[und_id]
         vol_dist = vix_dist if vix_dist is not None else pd.Series(np.zeros(len(und_dist)), index=und_dist.index)
-        pnl_dict[row['security_id']] = _reprice_option(row, und_dist, vol_dist)
+        pnl_row = _reprice_option(row, und_dist, vol_dist)
+        if pnl_row is None:
+            print(f'Warning: cannot price (iv={row.iv}, tenor={row.tenor}, underlying_price={row.underlying_price}) '
+                  f'— skipping {row.security_id}')
+            unpriced.append(row['security_id'])
+            continue
+        pnl_dict[row['security_id']] = pnl_row
+
+    # Drop any P&L left in the HDF by an earlier run, so var_engine sees these
+    # as missing (no VaR) rather than using a stale distribution
+    output_file = PNL_FILE
+    removed = _remove_stale_pnl(unpriced, output_file)
+    if removed:
+        print(f'Removed stale P&L from {output_file.name} for {len(removed)} unpriced option(s): {", ".join(removed)}')
 
     if not pnl_dict:
         print('No P&L computed — output not written.')
@@ -190,7 +227,6 @@ def calc_options_pnl(as_of_date: date = None) -> pd.DataFrame:
     print(f'P&L distributions computed: {pnl.shape[1]} securities, {pnl.shape[0]} scenarios')
 
     # Step 6: Save P&L to HDF under PNL/{SecurityID}
-    output_file = config['VaR_DIR'] / 'security_pnl.h5'
     hdf_utils.save(pnl, 'PNL', output_file)
     print(f'Saved: {output_file}')
 
@@ -293,12 +329,7 @@ def debug(as_of_date: date = None, max_securities: int = 2) -> None:
     step3 = securities.copy()
 
     # Step 4: Scenario distributions
-    und_dists = var_utils.get_dist(und_ids, 'DELTA')
-    vix_sec_id = _get_security_id_by_ticker('VIX')
-    vix_dist = None
-    if vix_sec_id:
-        vix_dist_df = var_utils.get_dist([vix_sec_id], 'VEGA')
-        vix_dist = vix_dist_df[vix_sec_id] if vix_sec_id in vix_dist_df.columns else None
+    und_dists, vix_dist = load_option_scenarios(und_ids)
     print(f'Step 4: {und_dists.shape[1]} underlying distributions, {und_dists.shape[0]} scenarios; VIX dist: {vix_dist is not None}')
 
     # Step 5: Scenario P&L per security via BS re-pricing
@@ -310,7 +341,12 @@ def debug(as_of_date: date = None, max_securities: int = 2) -> None:
             continue
         und_dist = und_dists[und_id]
         vol_dist = vix_dist if vix_dist is not None else pd.Series(np.zeros(len(und_dist)), index=und_dist.index)
-        pnl_dict[row['security_id']] = _reprice_option(row, und_dist, vol_dist)
+        pnl_row = _reprice_option(row, und_dist, vol_dist)
+        if pnl_row is None:
+            print(f'Step 5 warning: cannot price (iv={row.iv}, tenor={row.tenor}, underlying_price={row.underlying_price}) '
+                  f'— skipping {row.security_id}')
+            continue
+        pnl_dict[row['security_id']] = pnl_row
 
     if not pnl_dict:
         print('Step 5: No P&L computed — nothing to write.')

@@ -6,8 +6,8 @@ that are not in current_security, fetches their attributes from
 security_info, and inserts them.
 
 Usage:
-    python maintenance/update_current_security.py
-    python maintenance/update_current_security.py --dry-run
+    python process2/update_current_security.py
+    python process2/update_current_security.py --dry-run
 """
 from __future__ import annotations
 

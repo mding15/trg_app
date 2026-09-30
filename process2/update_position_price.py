@@ -18,23 +18,26 @@ def update_position_price(positions, as_of_date):
     sec_ids = positions['SecurityID'].dropna().unique().tolist()
     prices = mkt_timeseries.get_last_prices(sec_ids, as_of_date)
 
-    # update position price from market DB
-    prices = prices.rename(columns={'Price': 'xPrice', 'PriceDate': 'xPriceDate'})
+    # update position price from market DB where the position has no price,
+    # or the market price is newer than the position's LastPriceDate.
+    # Both dates coerced to datetime64 so the comparison works even when no
+    # security has a market price (PriceDate would otherwise be all None/NaN).
+    prices = prices.dropna(subset=['Price']).drop_duplicates('SecurityID', keep='last').set_index('SecurityID')
+    mkt_price = pd.to_numeric(positions['SecurityID'].map(prices['Price']), errors='coerce')
+    mkt_date  = pd.to_datetime(positions['SecurityID'].map(prices['PriceDate']), errors='coerce')
     positions['LastPriceDate'] = pd.to_datetime(positions['LastPriceDate'], errors='coerce')
-    pos = positions.merge(prices, on='SecurityID', how='left')
-    mask = ~pos['xPrice'].isna() & (pos['LastPrice'].isna() | (pos['LastPriceDate'] < pos['xPriceDate']))
-    pos.loc[mask, 'LastPrice']     = pos.loc[mask, 'xPrice']
-    pos.loc[mask, 'LastPriceDate'] = pos.loc[mask, 'xPriceDate']
-    positions = pos.drop(columns=['xPrice', 'xPriceDate'])
+    mask = mkt_price.notna() & (positions['LastPrice'].isna() | (mkt_date > positions['LastPriceDate']))
+    positions.loc[mask, 'LastPrice']     = mkt_price[mask]
+    positions.loc[mask, 'LastPriceDate'] = mkt_date[mask]
 
     # Set cash price to 1
     mask = positions['AssetClass'] == 'Cash'
     positions.loc[mask, 'LastPrice'] = 1
     positions.loc[mask, 'LastPriceDate'] = as_of_date
 
-    # implied price
+    # implied price (absolute values: short positions have negative MarketValue and/or Quantity)
     mask = positions['LastPrice'].isna() & ~positions['Quantity'].isna()
-    positions.loc[mask, 'LastPrice'] = positions.loc[mask, 'MarketValue'] / positions.loc[mask, 'Quantity']
+    positions.loc[mask, 'LastPrice'] = positions.loc[mask, 'MarketValue'].abs() / positions.loc[mask, 'Quantity'].abs()
     positions.loc[mask, 'LastPriceDate'] = as_of_date
 
     # fallback price to 1
