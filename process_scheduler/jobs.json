@@ -236,6 +236,20 @@
   },
 
   {
+    "id": "load_option_iv",
+    "name": "Load Option IV",
+    "description": "Load option implied vols into option_iv (fill forward from the previous date until a data source is added).",
+    "script_path": "api/trgapp/detl/load_option_iv.py",
+    "script_type": "python",
+    "schedule_time": null,
+    "dependencies": ["as_of_date", "yh_eod_price"],
+    "max_retries": 2,
+    "retry_delay_seconds": 60,
+    "enabled": true,
+    "venv_path": null
+  },
+
+  {
     "id": "dashboard_process",
     "name": "Dashboard Process",
     "description": "Run daily dashboard computation process.",
