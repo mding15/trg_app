@@ -28,6 +28,7 @@ from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
+from psycopg2 import sql as pgsql
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from database2 import pg_connection
@@ -68,12 +69,14 @@ def _get_db_columns(table: str) -> list[str]:
 
 def _fetch_rows(table: str, limit: int | None) -> pd.DataFrame:
     """Fetch all columns from *table*, optionally capped at *limit* rows."""
-    sql = f"SELECT * FROM {table}"
+    query = pgsql.SQL("SELECT * FROM {}").format(pgsql.Identifier(table))
+    params: tuple = ()
     if limit is not None:
-        sql += f" LIMIT {limit}"
+        query += pgsql.SQL(" LIMIT %s")
+        params = (limit,)
     with pg_connection() as conn:
         with conn.cursor() as cur:
-            cur.execute(sql)
+            cur.execute(query, params)
             cols = [desc[0] for desc in cur.description]
             rows = cur.fetchall()
     return pd.DataFrame(rows, columns=cols)
@@ -101,7 +104,7 @@ def run(table: str, limit: int | None, dry_run: bool) -> None:
     if dry_run:
         with pg_connection() as conn:
             with conn.cursor() as cur:
-                cur.execute(f"SELECT COUNT(*) FROM {table}")
+                cur.execute(pgsql.SQL("SELECT COUNT(*) FROM {}").format(pgsql.Identifier(table)))
                 total = cur.fetchone()[0]
         preview = total if limit is None else min(total, limit)
         log.info("─" * 60)

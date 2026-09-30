@@ -226,14 +226,21 @@ def insert_dividend(df):
     
 # min_date = date.strftime('%Y-%m-%d')
 # max_date = date.strftime('%Y-%m-%d')
-def delete_stock_price(ticker, min_date, max_date):
-    
-    query = """DELETE FROM yh_stock_price WHERE ticker = %s
-    AND "date" BETWEEN %s AND %s
-    """
+# omit min_date/max_date to delete the ticker's entire history
+def delete_stock_price(ticker, min_date=None, max_date=None):
+
+    if min_date is None and max_date is None:
+        query = 'DELETE FROM yh_stock_price WHERE ticker = %s'
+        params = (ticker,)
+    else:
+        query = """DELETE FROM yh_stock_price WHERE ticker = %s
+        AND "date" BETWEEN %s AND %s
+        """
+        params = (ticker, min_date, max_date)
+
     with pg_connection() as conn:
         with conn.cursor() as cur:
-            cur.execute(query, (ticker, min_date, max_date))
+            cur.execute(query, params)
             conn.commit()
             print(f"deleted {cur.rowcount} row(s) from yh_stock_price")
 
@@ -267,6 +274,10 @@ def _delete_current_price(date, security_ids=None):
 
 
 # extract End of Day Price and save db
+# 1. get tickers from current_security and mkt_data_source
+# 2. call YH API GET_QUOTES to get prices for all tickers
+# 3. save to file config['YH_DIR']/EOD/{year}/price.{YYYYMMDD}.csv 
+# 4. insert into current_price table (delete existing rows for the date first)
 def extract_eod(tickers=None, asof_date=None):
 
     # use supplied date or fall back to proc_asof_date table
@@ -330,28 +341,37 @@ def update_current_price():
     copy_stock_price_to_current_price(tickers)
     
 # insert into current_price using stock_price
-def copy_stock_price_to_current_price(tickers):
-    
-    # last date is the starting date in current_price
-    last_date = db_utils.get_sql_df("select date_value from parameters where param_name='hist_price_last_date'")
-    last_date = pd.to_datetime(last_date['date_value']).iloc[0]
+# n_days: if given, per ticker keep only the most recent n_days rows (by
+# date) instead of filtering by the parameters.hist_price_last_date cutoff
+def copy_stock_price_to_current_price(tickers, n_days=None):
 
     tickers_str = ", ".join(["'" + x + "'" for x in tickers])
-    query = f"select * from yh_stock_price where ticker in ({tickers_str})"     
+    query = f"select * from yh_stock_price where ticker in ({tickers_str})"
     df = db_utils.get_sql_df(query)
     df['date'] = pd.to_datetime(df['date'])
-    df = df[df['date']>last_date]
 
-    # rename    
-    df = df.rename(columns={'ticker': 'Ticker', 'date':'Date', 'open': 'Open', 'high': 'High', 'low': 'Low', 'close': 'Close', 'volumne': 'Volume'})
+    if n_days is not None:
+        df = df.sort_values('date').groupby('ticker', group_keys=False).tail(n_days)
+    else:
+        # last date is the starting date in current_price
+        last_date = db_utils.get_sql_df("select date_value from parameters where param_name='hist_price_last_date'")
+        last_date = pd.to_datetime(last_date['date_value']).iloc[0]
+        df = df[df['date']>last_date]
 
-    # get SecurityID
-    query = f"""select * from current_security where "Ticker" in ({tickers_str})"""
+    # rename
+    df = df.rename(columns={'ticker': 'Ticker', 'date':'Date', 'open': 'Open', 'high': 'High', 'low': 'Low', 'close': 'Close', 'volume': 'Volume'})
+
+    # get SecurityID (via mkt_data_source -- the actual YH ticker mapping;
+    # current_security.Ticker is not always the same string, e.g. 'LQDA'
+    # vs the YH ticker 'LQDA.L')
+    query = f"""select "SecurityID", "SourceID" as "Ticker" from mkt_data_source
+    where "Source" = 'YH' and "SourceID" in ({tickers_str})"""
     df2 = db_utils.get_sql_df(query)
     df['SecurityID'] = df['Ticker'].map(df2.set_index('Ticker')['SecurityID'].to_dict())
+    df = df[df['SecurityID'].notna()]
     df['PriceTime'] = df['Date']
 
-    db_utils.insert_df('current_price', df, key_column='SecurityID')    
+    db_utils.insert_df('current_price', df, key_column='SecurityID')
     
 ########################################################################################
 # 

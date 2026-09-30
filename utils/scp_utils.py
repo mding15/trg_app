@@ -21,7 +21,7 @@ hosts = {
     }
 
 keys = {
-        'prod2': r"C:\Users\mgdin\local\AWS\KeyPairs\prod2.pem",
+        'prod2': r"C:\Users\mgdin\.ssh\id_rsa",
         'dev2':  r"C:\Users\mgdin\.ssh\id_rsa"
         }
 
@@ -47,16 +47,16 @@ def copy_YH(today):
 
 
 # copy portfolio file from AWS to local
-def copy_client_portfolio(client_id):
-    
+def copy_client_portfolio(client_id, server='prod2'):
+
     # client_id = '1015'
-    
+
     aws_dir = Path('/home/ec2-user/api/data/clients')
-    aws_path = aws_dir / f'{client_id}' 
+    aws_path = aws_dir / f'{client_id}'
 
     local_path = config['CLIENT_DIR']
-    
-    aws_to_local(aws_path, local_path)
+
+    aws_to_local(aws_path, local_path, server=server)
 
 ###############################################################################################
 # use this with CAUTIOUS!!!

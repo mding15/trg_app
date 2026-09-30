@@ -433,6 +433,7 @@ def _weights_and_conc(weights: dict | None) -> tuple:
 
 def _normalize_tracked(row) -> dict:
     acct_id, name, as_of_date, aum, exp_ret_pct, volatility, var_1d_95, sharpe_vol, sharpe_var = row
+    vrisk_pct = (float(var_1d_95) / float(aum) * 100) if var_1d_95 is not None and aum else None
     return {
         'id':          acct_id,
         'name':        name,
@@ -441,6 +442,7 @@ def _normalize_tracked(row) -> dict:
         'exp_ret_pct': exp_ret_pct,
         'vol':         volatility,
         'vrisk':       var_1d_95,
+        'vriskPct':    vrisk_pct,
         'sharpeVol':   sharpe_vol,
         'sharpeVar':   sharpe_var,
     }
@@ -453,14 +455,18 @@ def _normalize_adhoc(port_id: int, name: str, summary: dict) -> dict:
         as_of_fmt = date.fromisoformat(as_of_str).strftime('%d/%m/%y')
     except Exception:
         as_of_fmt = as_of_str or '—'
+    aum       = summary.get('aum')
+    var_1d_95 = summary.get('var1d95')
+    vrisk_pct = (float(var_1d_95) / float(aum) * 100) if var_1d_95 is not None and aum else None
     return {
         'id':          encode_whatif_id('adhoc', port_id),
         'name':        name,
         'as_of_date':  as_of_fmt,
-        'aum':         summary.get('aum'),
+        'aum':         aum,
         'exp_ret_pct': summary.get('expectedReturn'),
         'vol':         summary.get('volatility'),
-        'vrisk':       summary.get('var1d95'),
+        'vrisk':       var_1d_95,
+        'vriskPct':    vrisk_pct,
         'sharpeVol':   summary.get('sharpeVol'),
         'sharpeVar':   summary.get('sharpeVar'),
     }
@@ -479,6 +485,7 @@ def _to_entry(data: dict, weights: dict | None, params: dict | None) -> dict:
         'exp_ret':       round(float(exp_ret_pct) / 100, 4) if exp_ret_pct is not None else None,
         'vol':           round(float(data['vol']), 4) if data.get('vol') is not None else None,
         'vrisk':         round(float(data['vrisk']), 2) if data.get('vrisk') is not None else None,
+        'vriskPct':      round(float(data['vriskPct']), 4) if data.get('vriskPct') is not None else None,
         'sharpeVol':     round(float(data['sharpeVol']), 4) if data.get('sharpeVol') is not None else None,
         'sharpeVar':     round(float(data['sharpeVar']), 4) if data.get('sharpeVar') is not None else None,
         'conc':          conc,

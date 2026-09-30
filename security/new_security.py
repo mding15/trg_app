@@ -44,25 +44,43 @@ values so they're reviewable/editable (by hand in the CSV, or in the
 trg_ops New Securities page), not hardcoded in Step 2.
 
 ── Step 2: insert ──────────────────────────────────────────────────────────
-process_rows() only processes rows with parsed_security_type == 'Option' —
-every other row is left alone and reported as skipped (bonds and other types
-aren't handled yet). Every value written to the database — currency,
-asset_class, asset_type, data_source, option_class, option_type, strike,
-maturity, underlying, isin, cusip — comes directly from the row; nothing is
-hardcoded or re-derived here.
+process_rows() mirrors the security data layers:
 
-For each Option row:
-    1. Skip if the row's (already whitespace-normalized) `ticker` already
-       exists in security_xref as REF_TYPE='Ticker' — it's already been
-       created, by a previous run or otherwise.
-    2. Look up `underlying` in security_xref (REF_TYPE='Ticker') to resolve
-       underlying_sec_id. Skip if not found — an option_info row with no
-       resolvable underlying would silently break the options P&L engine's
-       join (see process2/calc_options_pnl.py), so the underlying must
-       already be set up first.
-    3. Otherwise: create_security(...), add_xref_if_missing(..., 'Ticker',
-       ...), and — only when non-blank — add_xref_if_missing(..., 'ISIN',
-       ...) / (..., 'CUSIP', ...), then create_option_info(...).
+    base layer  — security_info (one row per security) + security_xref (one
+                  or more identifier rows per security). Same for every type.
+    type layer  — type-specific data, via _TYPE_HANDLERS keyed by
+                  parsed_security_type:
+                      Option                     -> option_info
+                      Equity, Cash, Alternative  -> base only (no type data)
+                  Anything else (incl. Bond — bond_info isn't wired up yet)
+                  is skipped. Adding a type = a check/create pair + one
+                  registry entry.
+
+For each row, all checks run before any write, so a skipped row never leaves
+a partial security behind:
+    1. Type not in _TYPE_HANDLERS                  -> skipped_unsupported_type
+    2. No Ticker / ISIN / CUSIP on the row         -> skipped_no_identifier
+       (every security must have at least one security_xref row)
+    3. Identifiers already in security_xref:
+         all map to one security                   -> skipped_exists
+         map to different securities               -> skipped_conflict
+    4. asset_type blank                            -> skipped_missing_asset_type
+       (data_source blank -> defaults to 'MANUAL')
+    5. Type check — Option: `underlying` must resolve via security_xref
+       (REF_TYPE='Ticker'), since an option_info row with no resolvable
+       underlying silently breaks the options P&L engine's join (see
+       process2/calc_options_pnl.py)            -> skipped_no_underlying
+    6. dry_run                                     -> would_create
+    7. create_security(...), add_xref_if_missing(...) per identifier, then
+       the type's create step (Option: create_option_info(...)) -> created
+
+Identifiers of rows created (or would-create) in this run are added to the
+in-memory lookup, so a repeated identifier later in the same file is
+reported as skipped_exists rather than created twice.
+
+Every value written — currency, asset_class, asset_type, data_source,
+option_class, option_type, strike, maturity, underlying, isin, cusip — comes
+from the row; the only default is data_source='MANUAL' when blank.
 
 process_rows() is the shared core used by both the CLI
 (maintenance/insert_new_security.py) and the trg_ops API
@@ -74,6 +92,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime
 from pathlib import Path
+from typing import Callable, NamedTuple
 
 import pandas as pd
 
@@ -298,94 +317,177 @@ def write_results_csv(results: list[dict]) -> Path:
     return out_path
 
 
-def _batch_check_tickers(cur, tickers: list[str]) -> dict[str, str]:
-    """Return {ticker: SecurityID} for every given ticker already present in
-    security_xref as REF_TYPE='Ticker'."""
-    tickers = sorted({t for t in tickers if t})
-    if not tickers:
+# ── Lookup ──────────────────────────────────────────────────────────────────
+
+# security_xref REF_TYPE -> row column holding that identifier
+_REF_COLUMNS = {'Ticker': 'ticker', 'ISIN': 'isin', 'CUSIP': 'cusip'}
+
+DEFAULT_DATA_SOURCE = 'MANUAL'
+
+
+def _ref_value(v) -> str | None:
+    """Clean identifier value, or None if blank. CSV-loaded ISIN/CUSIP can
+    arrive as numbers (e.g. an all-digit CUSIP), so coerce to str."""
+    if v is None or (isinstance(v, float) and pd.isna(v)):
+        return None
+    if isinstance(v, float) and v.is_integer():
+        v = int(v)
+    v = str(v).strip()
+    return v or None
+
+
+def _row_refs(r) -> dict[str, str]:
+    """{REF_TYPE: REF_ID} for the row's non-blank identifiers."""
+    refs = {ref_type: _ref_value(r[col]) for ref_type, col in _REF_COLUMNS.items()}
+    return {k: v for k, v in refs.items() if v}
+
+
+def _batch_lookup_refs(cur, keys: set[tuple[str, str]]) -> dict[tuple[str, str], set[str]]:
+    """Return {(REF_TYPE, REF_ID): {SecurityID, ...}} for every given key
+    already present in security_xref."""
+    if not keys:
         return {}
+    ref_types = sorted({t for t, _ in keys})
+    ref_ids   = sorted({i for _, i in keys})
     cur.execute(
-        'SELECT "REF_ID", "SecurityID" FROM security_xref WHERE "REF_TYPE" = %s AND "REF_ID" = ANY(%s)',
-        ('Ticker', tickers),
+        'SELECT "REF_TYPE", "REF_ID", "SecurityID" FROM security_xref '
+        'WHERE "REF_TYPE" = ANY(%s) AND "REF_ID" = ANY(%s)',
+        (ref_types, ref_ids),
     )
-    return {ref_id: str(sec_id) for ref_id, sec_id in cur.fetchall()}
+    found: dict[tuple[str, str], set[str]] = {}
+    for ref_type, ref_id, sec_id in cur.fetchall():
+        if (ref_type, ref_id) in keys:
+            found.setdefault((ref_type, ref_id), set()).add(str(sec_id))
+    return found
+
+
+# ── Type layer ──────────────────────────────────────────────────────────────
+#
+# check(row, known)                    -> (skip_status | None, ctx)   before any write
+# create(cur, security_id, row, ctx)   -> None                        after base rows
+#
+# `known` is the {(REF_TYPE, REF_ID): {SecurityID}} lookup. `ctx` carries
+# whatever check() resolved (e.g. underlying_sec_id) through to create().
+
+def _check_option(r, known) -> tuple[str | None, dict]:
+    underlying = _ref_value(r['underlying'])
+    sec_ids = known.get(('Ticker', underlying), set()) if underlying else set()
+    if len(sec_ids) != 1:
+        return 'skipped_no_underlying', {}
+    return None, {'underlying': underlying, 'underlying_sec_id': next(iter(sec_ids))}
+
+
+def _create_option(cur, security_id: str, r, ctx: dict) -> None:
+    create_option_info(
+        cur, security_id,
+        _none_if_nan(r['option_type']), _none_if_nan(r['option_class']),
+        _none_if_nan(r['maturity']), _none_if_nan(r['strike']),
+        ctx['underlying'], ctx['underlying_sec_id'],
+    )
+
+
+class _TypeHandler(NamedTuple):
+    check:  Callable | None = None
+    create: Callable | None = None
+
+
+_BASE_ONLY = _TypeHandler()
+
+_TYPE_HANDLERS: dict[str, _TypeHandler] = {
+    'Option':      _TypeHandler(_check_option, _create_option),
+    'Equity':      _BASE_ONLY,
+    'Cash':        _BASE_ONLY,
+    'Alternative': _BASE_ONLY,
+}
+
+
+# ── Base layer ──────────────────────────────────────────────────────────────
+
+def _check_base(r, refs: dict[str, str], known) -> tuple[str | None, dict]:
+    """Checks common to every type. Returns (skip_status | None, extra result fields)."""
+    if not refs:
+        return 'skipped_no_identifier', {}
+
+    matched = set().union(*(known.get(k, set()) for k in refs.items()))
+    if len(matched) == 1:
+        return 'skipped_exists', {'security_id': next(iter(matched))}
+    if len(matched) > 1:
+        return 'skipped_conflict', {'security_id': ', '.join(sorted(matched))}
+
+    if _none_if_nan(r['asset_type']) is None:
+        return 'skipped_missing_asset_type', {}
+    return None, {}
+
+
+def _create_base(cur, r, refs: dict[str, str], data_source: str) -> str:
+    """Write security_info + one security_xref row per identifier; return SecurityID."""
+    security_id = create_security(
+        cur, r['security_name'], _none_if_nan(r['currency']),
+        _none_if_nan(r['asset_class']), _none_if_nan(r['asset_type']), data_source,
+    )
+    for ref_type, ref_id in refs.items():
+        add_xref_if_missing(cur, security_id, ref_type, ref_id, data_source)
+    return security_id
 
 
 def process_rows(cur, df: pd.DataFrame, dry_run: bool, log: logging.Logger) -> list[dict]:
     """Process every row in df (already validated/normalized). Returns one
     result dict per row, in df's original order, each with a 'status':
-    'created' | 'would_create' | 'skipped_exists' | 'skipped_no_underlying' |
-    'skipped_not_option'."""
-    is_option = df['parsed_security_type'] == 'Option'
-    option_rows = df[is_option]
-
-    existing = _batch_check_tickers(
-        cur, list(option_rows['ticker']) + list(option_rows['underlying']),
-    ) if not option_rows.empty else {}
-    log.info(f"{len(existing)} ticker(s) already in security_xref")
+    'created' | 'would_create' | 'skipped_exists' | 'skipped_conflict' |
+    'skipped_no_identifier' | 'skipped_missing_asset_type' |
+    'skipped_no_underlying' | 'skipped_unsupported_type'.
+    See the module docstring (Step 2) for the order checks run in."""
+    row_refs = [_row_refs(r) for _, r in df.iterrows()]
+    keys = {k for refs in row_refs for k in refs.items()}
+    keys |= {('Ticker', u) for u in map(_ref_value, df['underlying']) if u}
+    known = _batch_lookup_refs(cur, keys)
+    log.info(f"{len(known)} identifier(s) already in security_xref")
 
     results: list[dict] = []
 
-    for _, r in df.iterrows():
-        name = r['security_name']
+    for (_, r), refs in zip(df.iterrows(), row_refs):
+        name  = r['security_name']
+        stype = r['parsed_security_type']
+        result = {'security_name': name, 'security_type': stype}
 
-        if r['parsed_security_type'] != 'Option':
-            results.append({'security_name': name, 'status': 'skipped_not_option'})
+        handler = _TYPE_HANDLERS.get(stype)
+        if handler is None:
+            results.append({**result, 'status': 'skipped_unsupported_type'})
             continue
 
-        ticker     = r['ticker']
-        underlying = r['underlying']
-
-        if ticker and ticker in existing:
-            log.info(f"  SKIP (already exists) '{name}'  ticker='{ticker}' -> {existing[ticker]}")
-            results.append({'security_name': name, 'status': 'skipped_exists', 'security_id': existing[ticker]})
+        status, extra = _check_base(r, refs, known)
+        ctx: dict = {}
+        if status is None and handler.check:
+            status, ctx = handler.check(r, known)
+        result.update(extra, **ctx)
+        if status:
+            log.info(f"  SKIP ({status}) [{stype}] '{name}'  refs={refs}"
+                     + (f" -> {extra['security_id']}" if 'security_id' in extra else ''))
+            results.append({**result, 'status': status})
             continue
 
-        underlying_sec_id = existing.get(underlying) if underlying else None
-        if underlying_sec_id is None:
-            log.warning(f"  SKIP (no underlying) '{name}'  underlying='{underlying}' not found in security_xref")
-            results.append({'security_name': name, 'status': 'skipped_no_underlying'})
-            continue
-
-        isin         = _none_if_nan(r['isin'])
-        cusip        = _none_if_nan(r['cusip'])
-        currency     = _none_if_nan(r['currency'])
-        asset_class  = _none_if_nan(r['asset_class'])
-        asset_type   = _none_if_nan(r['asset_type'])
-        data_source  = _none_if_nan(r['data_source'])
-        option_type  = _none_if_nan(r['option_type'])
-        strike       = _none_if_nan(r['strike'])
-        maturity     = _none_if_nan(r['maturity'])
-        option_class = _none_if_nan(r['option_class'])
+        data_source = _none_if_nan(r['data_source']) or DEFAULT_DATA_SOURCE
+        desc = (f"[{stype}] '{name}'  refs={refs}  currency={_none_if_nan(r['currency'])} "
+                f"asset_class={_none_if_nan(r['asset_class'])} asset_type={_none_if_nan(r['asset_type'])} "
+                f"data_source={data_source}")
+        if stype == 'Option':
+            desc += (f"  underlying='{ctx['underlying']}' ({ctx['underlying_sec_id']}) "
+                     f"type={_none_if_nan(r['option_type'])} strike={_none_if_nan(r['strike'])} "
+                     f"maturity={_none_if_nan(r['maturity'])} option_class={_none_if_nan(r['option_class'])}")
 
         if dry_run:
-            log.info(
-                f"  WOULD CREATE '{name}'  ticker='{ticker}' isin='{isin}' cusip='{cusip}' "
-                f"underlying='{underlying}' ({underlying_sec_id})  currency={currency} "
-                f"asset_class={asset_class} asset_type={asset_type} data_source={data_source}  "
-                f"type={option_type} strike={strike} maturity={maturity} option_class={option_class}"
-            )
-            results.append({
-                'security_name': name, 'status': 'would_create',
-                'underlying_sec_id': underlying_sec_id,
-            })
-            continue
+            security_id = '(new)'
+            log.info(f"  WOULD CREATE {desc}")
+            results.append({**result, 'status': 'would_create'})
+        else:
+            security_id = _create_base(cur, r, refs, data_source)
+            if handler.create:
+                handler.create(cur, security_id, r, ctx)
+            log.info(f"  CREATED {security_id} — {desc}")
+            results.append({**result, 'status': 'created', 'security_id': security_id})
 
-        security_id = create_security(cur, name, currency, asset_class, asset_type, data_source)
-        add_xref_if_missing(cur, security_id, 'Ticker', ticker, data_source)
-        add_xref_if_missing(cur, security_id, 'ISIN', isin, data_source)
-        add_xref_if_missing(cur, security_id, 'CUSIP', cusip, data_source)
-        create_option_info(
-            cur, security_id, option_type, option_class, maturity,
-            strike, underlying, underlying_sec_id,
-        )
-        log.info(
-            f"  CREATED {security_id} — '{name}'  ticker='{ticker}' isin='{isin}' cusip='{cusip}' "
-            f"underlying='{underlying}' ({underlying_sec_id})  type={option_type} strike={strike} maturity={maturity}"
-        )
-        results.append({
-            'security_name': name, 'status': 'created', 'security_id': security_id,
-            'underlying_sec_id': underlying_sec_id,
-        })
+        # A repeat of these identifiers later in the same file is now a duplicate
+        for k in refs.items():
+            known.setdefault(k, set()).add(security_id)
 
     return results

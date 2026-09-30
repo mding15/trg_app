@@ -4,7 +4,8 @@ dashboard/db_port_position_var.py — Database operations for the port_position_
 Mirrors process2/db_position_var.py but keyed by port_id instead of (as_of_date, account_id).
 
 Functions:
-    insert_port_position_var(results, port_id, as_of_date) — write to port_position_var
+    to_port_position_var_frame(results, port_id, as_of_date) — build rows (no DB access)
+    insert_port_position_var(results, port_id, as_of_date)   — write to port_position_var
 """
 from __future__ import annotations
 
@@ -98,11 +99,11 @@ _TABLE_COLS = [
 ]
 
 
-def insert_port_position_var(results: pd.DataFrame, port_id: int, as_of_date) -> int:
+def to_port_position_var_frame(results: pd.DataFrame, port_id: int | None, as_of_date) -> pd.DataFrame:
     """
-    Insert results into port_position_var for the given port_id.
-    Deletes existing rows for port_id before inserting to ensure a clean
-    replace on re-runs. Returns the number of rows inserted.
+    Convert engine-convention results into port_position_var rows: DB column
+    names, coerced types, NaN/NaT → None, columns in _TABLE_COLS order.
+    No database access.
     """
     df = results.copy()
     df['port_id']    = port_id
@@ -128,9 +129,19 @@ def insert_port_position_var(results: pd.DataFrame, port_id: int, as_of_date) ->
     df = df.loc[:, ~df.columns.duplicated(keep='last')]
 
     cols = [c for c in _TABLE_COLS if c in df.columns]
-    df   = df[cols]
+    return df[cols]
 
-    col_sql      = ', '.join(f'"{c}"' for c in cols)
+
+def insert_port_position_var(results: pd.DataFrame, port_id: int, as_of_date) -> int:
+    """
+    Insert results into port_position_var for the given port_id.
+    Deletes existing rows for port_id before inserting to ensure a clean
+    replace on re-runs. Returns the number of rows inserted.
+    """
+    df   = to_port_position_var_frame(results, port_id, as_of_date)
+    cols = list(df.columns)
+
+    col_sql     = ', '.join(f'"{c}"' for c in cols)
     placeholders = ', '.join(f'%({c})s' for c in cols)
     update_sql   = ', '.join(
         f'"{c}" = EXCLUDED."{c}"'

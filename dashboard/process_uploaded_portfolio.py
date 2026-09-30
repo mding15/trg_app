@@ -13,7 +13,11 @@ Pipeline:
     6.  Add beta column.
     7.  Insert into port_position_var.
 
+Steps 1-6 live in compute_portfolio_var(), which performs no database writes
+(reads only), so it can be run standalone — see maintenance/calc_portfolio_var.py.
+
 Public API:
+    compute_portfolio_var(file_path, asof_date=None) -> (params, positions, result)
     process_portfolio(file_path, port_id)
 """
 from __future__ import annotations
@@ -45,12 +49,17 @@ _TEMPLATE_TO_ENGINE = {
 }
 
 
-def process_portfolio(file_path: Path, port_id: int) -> None:
+def compute_portfolio_var(file_path: Path, asof_date=None) -> tuple[dict, pd.DataFrame, pd.DataFrame]:
     """
-    Process an uploaded portfolio file and insert VaR results into port_position_var.
+    Run steps 1-6 of the pipeline on an input file. No database writes.
 
     file_path: path to the input Excel file.
-    port_id:   portfolio ID used as the foreign key in port_position_var.
+    asof_date: optional override for the file's AsofDate parameter.
+
+    Returns (params, positions, result):
+        params    — parameters as read (AsofDate replaced if asof_date given).
+        positions — enriched positions, all rows (active + excluded).
+        result    — positions with VaR metrics and beta; excluded rows have NULL VaR.
     """
     # Deferred to avoid circular imports: update_position_price → mkt_timeseries
     # → db_utils → api → routes → upload_portfolio → this module
@@ -73,6 +82,8 @@ def process_portfolio(file_path: Path, port_id: int) -> None:
         if col not in positions.columns:
             positions[col] = None
 
+    if asof_date is not None:
+        params['AsofDate'] = asof_date
     asof_date = params.get('AsofDate')
 
     # ── 2b. Resolve SecurityID (TRG_ID → ISIN → CUSIP → BB_GLOBAL → Ticker) ──
@@ -88,21 +99,6 @@ def process_portfolio(file_path: Path, port_id: int) -> None:
     active   = positions[positions['excluded'] != True].reset_index(drop=True)
     excluded = positions[positions['excluded'] == True].reset_index(drop=True)
     logger.info(f'Split: {len(active)} active, {len(excluded)} excluded')
-
-    insert_port_parameters(params, port_id)
-    n_pos = insert_port_positions(positions, port_id)
-    logger.info(f'inserted params and {n_pos} rows into port_parameters/port_positions for port_id={port_id}')
-
-    # ── Update portfolio_info with computed market_value and as_of_date ──────
-    mv = float(positions['MarketValue'].sum()) if 'MarketValue' in positions.columns else None
-    with pg_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                'UPDATE portfolio_info SET market_value = %s, as_of_date = %s WHERE port_id = %s',
-                (mv, asof_date, port_id),
-            )
-        conn.commit()
-    logger.info(f'updated portfolio_info: market_value={mv}, as_of_date={asof_date} for port_id={port_id}')
 
     # ── 3. VaR engine ─────────────────────────────────────────────────────────
     var_metrics = var_engine.calc_var(active)
@@ -123,6 +119,34 @@ def process_portfolio(file_path: Path, port_id: int) -> None:
     betas_bulk = fetch_betas_bulk([beta_key], sec_ids)
     betas      = betas_bulk.get(beta_key, {})
     result     = add_beta_to_result(result, betas, logger)
+
+    return params, positions, result
+
+
+def process_portfolio(file_path: Path, port_id: int) -> None:
+    """
+    Process an uploaded portfolio file and insert VaR results into port_position_var.
+
+    file_path: path to the input Excel file.
+    port_id:   portfolio ID used as the foreign key in port_position_var.
+    """
+    params, positions, result = compute_portfolio_var(file_path)
+    asof_date = params.get('AsofDate')
+
+    insert_port_parameters(params, port_id)
+    n_pos = insert_port_positions(positions, port_id)
+    logger.info(f'inserted params and {n_pos} rows into port_parameters/port_positions for port_id={port_id}')
+
+    # ── Update portfolio_info with computed market_value and as_of_date ──────
+    mv = float(positions['MarketValue'].sum()) if 'MarketValue' in positions.columns else None
+    with pg_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                'UPDATE portfolio_info SET market_value = %s, as_of_date = %s WHERE port_id = %s',
+                (mv, asof_date, port_id),
+            )
+        conn.commit()
+    logger.info(f'updated portfolio_info: market_value={mv}, as_of_date={asof_date} for port_id={port_id}')
 
     # ── 7. Insert into port_position_var ─────────────────────────────────────
     n = insert_port_position_var(result, port_id, asof_date)

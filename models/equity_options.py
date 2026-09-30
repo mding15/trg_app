@@ -40,27 +40,43 @@ def calc_sn_price(init_price, curr_price, r, sigma, T, PayOff, seed=15, n_sim=10
 # In[12]:
 
 
+IV_LO, IV_HI = 1e-4, 10.0   # bracket for the Brent fallback
+
+
+def _solve_iv(f, x0):
+    """Root of f(sigma) = BS price - market price.
+
+    Newton first (fast near the answer); if it fails or lands on sigma <= 0 —
+    e.g. deep OTM, where vega at x0 is tiny and the first step overshoots —
+    fall back to Brent's method on [IV_LO, IV_HI]. BS price is increasing in
+    sigma, so a root exists in the bracket only if f changes sign across it;
+    otherwise the price is outside the attainable range (at/below the
+    sigma~0 value, or above the sigma=IV_HI value) and there is no IV: NaN.
+    """
+    try:
+        sigma = optimize.newton(f, x0, maxiter=500, tol=1e-6)
+        if sigma > 0:
+            return sigma
+    except RuntimeError:
+        pass
+
+    f_lo, f_hi = f(IV_LO), f(IV_HI)
+    if not f_lo * f_hi < 0:    # same sign, zero, or NaN
+        return np.nan
+    return optimize.brentq(f, IV_LO, IV_HI, xtol=1e-8)
+
+
 def iv_call(price, S, K, T, r, x0=0.2):
     def f(sigma):
         return BS_CALL(S, K, T, r, sigma) - price
 
-    try:
-        sigma = optimize.newton(f, x0, maxiter=500, tol=1e-6)
-    except RuntimeError:
-        sigma = np.nan
-    
-    return sigma
+    return _solve_iv(f, x0)
 
 def iv_put(price, S, K, T, r, x0=0.2):
     def f(sigma):
         return BS_PUT(S, K, T, r, sigma) - price
 
-    try:
-        sigma = optimize.newton(f, x0, maxiter=500, tol=1e-6)
-    except RuntimeError:
-        sigma = np.nan
-    
-    return sigma
+    return _solve_iv(f, x0)
 
 
 # # Greeks

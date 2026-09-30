@@ -2,7 +2,9 @@
 calc_vix_pnl.py — Daily P&L for VIX options.
 
 P&L is computed by re-pricing each VIX option across historical VIX level scenarios:
-    1. Fetch VIX option positions and contract details from proc_positions + option_info.
+    1. Fetch VIX option positions and contract details from proc_positions + option_info,
+       with per-share prices from option_price (process2/calc_option_price.py) for
+       as_of_date; positions with no option_price row are skipped with a warning.
     2. Fetch current VIX spot price and compute tenor and risk-free rate per option.
     3. Compute implied volatility and Greeks (Delta, Gamma, Vega, Theta) per option.
     4. Re-price each option across VIX level scenarios from the VaR HDF.
@@ -53,7 +55,7 @@ def _get_security_id_by_ticker(ticker: str) -> str | None:
 
 
 def _get_vix_option_securities(as_of_date) -> pd.DataFrame:
-    """Return VIX option positions with contract details and market prices for as_of_date.
+    """Return VIX option positions with contract details and option_price prices for as_of_date.
 
     Columns: security_id, price, option_type, strike, maturity, underlying_sec_id
     """
@@ -62,7 +64,7 @@ def _get_vix_option_securities(as_of_date) -> pd.DataFrame:
             cur.execute(
                 """
                 SELECT pp.security_id,
-                       SUM(pp.market_value) / NULLIF(SUM(pp.quantity), 0) AS price,
+                       op.price,
                        oi.option_type,
                        oi.strike,
                        oi.maturity,
@@ -74,14 +76,17 @@ def _get_vix_option_securities(as_of_date) -> pd.DataFrame:
                 JOIN option_info oi
                   ON oi.security_id = pp.security_id
                  AND oi.option_class = 'VIX'
+                LEFT JOIN option_price op
+                  ON op.security_id = pp.security_id
+                 AND op.as_of_date = pp.as_of_date
                 WHERE pp.as_of_date = %s
-                GROUP BY pp.security_id, oi.option_type, oi.strike, oi.maturity, oi.underlying_sec_id
+                GROUP BY pp.security_id, op.price, oi.option_type, oi.strike, oi.maturity, oi.underlying_sec_id
                 """,
                 (as_of_date,),
             )
             rows = cur.fetchall()
     df = pd.DataFrame(rows, columns=['security_id', 'price', 'option_type', 'strike', 'maturity', 'underlying_sec_id'])
-    df['price']  = df['price'].astype(float) / 100
+    df['price']  = df['price'].astype(float)
     df['strike'] = df['strike'].astype(float)
     return df
 
@@ -127,7 +132,8 @@ def calc_vix_pnl(as_of_date: date = None) -> pd.DataFrame:
 
     null_prices = securities['price'].isna().sum()
     if null_prices:
-        print(f'Warning: {null_prices} securities excluded (price could not be computed).')
+        print(f'Warning: {null_prices} securities excluded (no option_price row for {as_of_date}): '
+              f'{", ".join(securities.loc[securities["price"].isna(), "security_id"])}')
     securities = securities.dropna(subset=['price'])
 
     # Step 2: VIX spot price, tenor, and risk-free rate
@@ -248,7 +254,8 @@ def debug(as_of_date: date = None, max_securities: int = 2) -> None:
 
     null_prices = securities['price'].isna().sum()
     if null_prices:
-        print(f'Step 1 warning: {null_prices} securities excluded (no price).')
+        print(f'Step 1 warning: {null_prices} securities excluded (no option_price row for {as_of_date}): '
+              f'{", ".join(securities.loc[securities["price"].isna(), "security_id"])}')
     securities = securities.dropna(subset=['price'])
 
     # Step 2: VIX spot price, tenor, and risk-free rate

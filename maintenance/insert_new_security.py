@@ -1,14 +1,15 @@
 """
 insert_new_security.py — CLI wrapper (Step 2 of the new-security workflow):
 reads a CSV produced (and manually reviewed/edited) by
-process_new_security.py and creates security_info/security_xref/option_info
-rows in the database for its Option rows.
+process_new_security.py and creates security_info/security_xref rows (plus
+option_info for options) for its Option, Equity, Cash and Alternative rows.
 
 The actual logic (validation, per-row processing) lives in
 security/new_security.py — this file is just the console-logging/argparse/
 file-loading shell around it. See that module's docstring for full details.
 
 Usage:
+    python maintenance/insert_new_security.py --dry-run          # latest new_securities_*.csv
     python maintenance/insert_new_security.py --file new_securities_20260729_150730.csv
     python maintenance/insert_new_security.py --file new_securities_20260729_150730.csv --dry-run
 """
@@ -38,6 +39,9 @@ def _setup_logger() -> logging.Logger:
     return logger
 
 
+DEFAULT_PATTERN = "new_securities_*.csv"
+
+
 def _resolve_path(file: str) -> Path:
     p = Path(file)
     if p.exists():
@@ -45,10 +49,25 @@ def _resolve_path(file: str) -> Path:
     return CSV_DIR / file
 
 
-def run(file: str, dry_run: bool) -> None:
+def _latest_csv() -> Path | None:
+    """Most recently generated new_securities_<YYYYMMDD_HHMMSS>.csv — by the
+    timestamp in the name, not mtime, since reviewing/editing an older file
+    would otherwise make it the 'latest'."""
+    files = sorted(CSV_DIR.glob(DEFAULT_PATTERN), key=lambda f: f.name)
+    return files[-1] if files else None
+
+
+def run(file: str | None, dry_run: bool) -> None:
     log = _setup_logger()
 
-    path = _resolve_path(file)
+    if file is None:
+        path = _latest_csv()
+        if path is None:
+            log.error(f"No {DEFAULT_PATTERN} found in {CSV_DIR}")
+            sys.exit(1)
+        log.info(f"No --file given; using latest {DEFAULT_PATTERN}: {path.name}")
+    else:
+        path = _resolve_path(file)
     if not path.exists():
         log.error(f"File not found: {path}")
         sys.exit(1)
@@ -75,28 +94,25 @@ def run(file: str, dry_run: bool) -> None:
         counts[res['status']] = counts.get(res['status'], 0) + 1
 
     log.info("─" * 60)
-    log.info(
-        f"Done.  Created: {counts.get('created', 0) + counts.get('would_create', 0)}  "
-        f"Skipped (already exists): {counts.get('skipped_exists', 0)}  "
-        f"Skipped (no underlying): {counts.get('skipped_no_underlying', 0)}  "
-        f"Skipped (not option): {counts.get('skipped_not_option', 0)}  "
-        f"Total: {len(df)}"
-    )
+    log.info(f"Done.  Total: {len(df)}")
+    for status, n in sorted(counts.items()):
+        log.info(f"  {status:<28} {n}")
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Create security_info/security_xref/option_info rows for Option rows in a reviewed process_new_security.py CSV.",
+        description="Create security_info/security_xref (+ option_info) rows for supported types in a reviewed process_new_security.py CSV.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "Examples:\n"
+            "  python maintenance/insert_new_security.py --dry-run\n"
             "  python maintenance/insert_new_security.py --file new_securities_20260729_150730.csv\n"
             "  python maintenance/insert_new_security.py --file new_securities_20260729_150730.csv --dry-run\n"
         ),
     )
     parser.add_argument(
-        "--file", required=True, metavar="FILENAME",
-        help="CSV filename inside data/maintenance/CSV/ (or a full path)",
+        "--file", default=None, metavar="FILENAME",
+        help=f"CSV filename inside data/maintenance/CSV/ (or a full path); default: latest {DEFAULT_PATTERN}",
     )
     parser.add_argument(
         "--dry-run", action="store_true",

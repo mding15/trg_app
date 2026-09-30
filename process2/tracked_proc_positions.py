@@ -35,6 +35,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from database2 import pg_connection, get_proc_asof_date
 from mkt_data.price_timeseries import get_current_price
+from process2.tracked_portfolios import load_tracked_portfolios
 
 FEED_SOURCE = 'file_upload'
 
@@ -67,44 +68,6 @@ def _setup_logger(as_of_date, account_id, run_ts: str) -> logging.Logger:
 
 
 # ── DB helpers ─────────────────────────────────────────────────────────────────
-
-def _load_tracked_portfolios(cur, account_id=None) -> list[dict]:
-    """
-    Fetch portfolios where port_type='tracked', then keep only the latest
-    upload_dt per account_id.  If account_id is given, restrict to that account.
-    """
-    if account_id is not None:
-        cur.execute(
-            """
-            SELECT port_id, account_id, port_name, upload_dt
-            FROM portfolio_info
-            WHERE port_type = 'tracked' AND filename != 'auto feed' AND account_id = %s
-              AND account_id NOT IN (SELECT parent_account_id FROM account WHERE parent_account_id IS NOT NULL)
-            """,
-            (account_id,),
-        )
-    else:
-        cur.execute(
-            """
-            SELECT port_id, account_id, port_name, upload_dt
-            FROM portfolio_info
-            WHERE port_type = 'tracked' AND filename != 'auto feed'
-              AND account_id NOT IN (SELECT parent_account_id FROM account WHERE parent_account_id IS NOT NULL)
-            """
-        )
-    rows = [
-        {'port_id': r[0], 'account_id': r[1], 'port_name': r[2], 'upload_dt': r[3]}
-        for r in cur.fetchall()
-    ]
-
-    # Deduplicate: keep latest upload_dt per account_id
-    latest: dict[int, dict] = {}
-    for r in rows:
-        acc = r['account_id']
-        if acc not in latest or (r['upload_dt'] or datetime.min) > (latest[acc]['upload_dt'] or datetime.min):
-            latest[acc] = r
-    return list(latest.values())
-
 
 def _load_positions(cur, port_ids: list[int]) -> list[dict]:
     """Fetch all port_positions rows for the given port_ids."""
@@ -255,7 +218,7 @@ def process_tracked_positions(as_of_date, account_id=None, dry_run=False) -> int
         with conn.cursor() as cur:
 
             # ── Steps 2+3: tracked portfolios, deduplicated by account_id ─────────
-            portfolios = _load_tracked_portfolios(cur, account_id)
+            portfolios = load_tracked_portfolios(cur, account_id)
             if not portfolios:
                 logger.warning("No tracked portfolios found in portfolio_info (port_type='tracked')")
                 return 0

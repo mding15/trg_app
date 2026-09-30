@@ -10,4 +10,5 @@ test_env.py
 *.log
 *.tmp
 *.bak
+.env
 
