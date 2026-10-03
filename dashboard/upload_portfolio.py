@@ -152,16 +152,31 @@ def _update_portfolio_status(port_id: int, status: str, message: str | None = No
         conn.commit()
 
 
-def _run_in_background(port_id: int, port_name: str, file_path: Path) -> None:
+def _run_in_background(port_id: int, port_name: str, file_path: Path,
+                       tracked_account_id: int | None = None) -> None:
+    """Process the uploaded file; for a tracked upload, then run the account's
+    pipeline right away (process2/run_tracked_account.py) so its dashboard tables
+    don't wait for the nightly run. Status stays 'Processing' until both finish."""
     from api import app
     _update_portfolio_status(port_id, 'Processing')
     try:
         with app.app_context():
             process_portfolio(file_path, port_id)
-        _update_portfolio_status(port_id, 'Success')
     except Exception as e:
         logger.error(f'process_portfolio failed for port_id={port_id}: {e}')
         _update_portfolio_status(port_id, 'Error', str(e))
+        return
+
+    if tracked_account_id is not None:
+        from process2.run_tracked_account import launch
+        logger.info(f'port_id={port_id}: running account pipeline for account_id={tracked_account_id}')
+        ok, message = launch(tracked_account_id)
+        if not ok:
+            logger.error(f'port_id={port_id}: {message}')
+            _update_portfolio_status(port_id, 'Error', message)
+            return
+
+    _update_portfolio_status(port_id, 'Success')
 
 #
 # called from /api/portfolios/upload in routes.py
@@ -193,7 +208,7 @@ def upload_portfolio(username: str, name: str, request, account_id: int,
 
     threading.Thread(
         target=_run_in_background,
-        args=(port_id, name, file_path),
+        args=(port_id, name, file_path, insert_account_id),
         daemon=True,
     ).start()
 

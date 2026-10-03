@@ -6,10 +6,12 @@ model data off the server, etc.), gated by @ops_role_required
 
 POST   api/maint/dist                   {rf_ids: [...], category: 'PRICE', model_id: None}  -> CSV
 POST   api/maint/dist/upload            multipart: file=<csv>, category, model_id, dry_run  (superadmin)
+POST   api/maint/account/<id>/recalc    ?date=YYYY-MM-DD  -> 202, runs process2/run_tracked_account.py  (superadmin)
 """
 import io
 import re
 import datetime
+import threading
 
 import pandas as pd
 from flask import request, jsonify, make_response
@@ -19,6 +21,7 @@ from api import app
 from api.auth import ops_role_required
 from api.logging_config import get_logger
 from database.models import User
+from database2 import pg_connection
 from utils import var_utils, hdf_utils
 
 logger = get_logger(__name__)
@@ -41,6 +44,11 @@ def _resolve_var_file(model_id):
     if not var_file.exists():
         raise ValueError(f'model file not found: {var_file.name}')
     return var_file
+
+
+def _is_superadmin(username):
+    user = User.query.filter_by(username=username).first()
+    return bool(user and user.role == 'superadmin')
 
 
 def _model_id_of(var_file):
@@ -94,8 +102,7 @@ def maint_upload_dist(username):
     first backed up to VaR_DIR/backup/dist.<model>.<category>.<timestamp>.csv, which can
     be re-uploaded to undo. dry_run=true validates and reports without writing.
     """
-    user = User.query.filter_by(username=username).first()
-    if not user or user.role != 'superadmin':
+    if not _is_superadmin(username):
         return jsonify({'error': 'Superadmin role required'}), 403
 
     upload = request.files.get('file')
@@ -172,3 +179,42 @@ def maint_upload_dist(username):
         return jsonify({'error': str(e), **result}), 500
 
     return jsonify(result), 200
+
+
+@app.route('/api/maint/account/<int:account_id>/recalc', methods=['POST'])
+@ops_role_required
+def maint_recalc_account(username, account_id):
+    """Run the account-level pipeline (process2/run_tracked_account.py) for one tracked
+    account in the background: tracked_proc → parent merge → VaR → alternative VaR →
+    stress test → dashboard. Returns 202 right away; the outcome goes to
+    ../log/run_tracked_account_<id>_<date>_<ts>.log and the API log.
+    """
+    if not _is_superadmin(username):
+        return jsonify({'error': 'Superadmin role required'}), 403
+
+    as_of_date = request.args.get('date') or None
+    if as_of_date:
+        try:
+            datetime.datetime.strptime(as_of_date, '%Y-%m-%d')
+        except ValueError:
+            return jsonify({'error': f'invalid date: {as_of_date!r} (expected YYYY-MM-DD)'}), 400
+
+    with pg_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute('SELECT 1 FROM account WHERE account_id = %s', (account_id,))
+            if cur.fetchone() is None:
+                return jsonify({'error': f'account_id {account_id} not found'}), 404
+
+    def _run():
+        from process2.run_tracked_account import launch
+        ok, message = launch(account_id, as_of_date)
+        (logger.info if ok else logger.error)(f'{username}: recalc account_id={account_id} date={as_of_date}: {message}')
+
+    logger.info(f'{username}: recalc account_id={account_id} date={as_of_date} started')
+    threading.Thread(target=_run, daemon=True).start()
+    return jsonify({
+        'message': 'account recalculation started',
+        'account_id': account_id,
+        'as_of_date': as_of_date,
+        'log': f'log/run_tracked_account_{account_id}_*.log',
+    }), 202

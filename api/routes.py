@@ -4,45 +4,119 @@ Created on Sun Mar 17 16:21:32 2024
 
 @author: mgding
 
-# register and login
-api/register {firstName, lastName, email, companyName}
-api/login {username, password}
-api/verify_token
-api/forget_password {email}
-api/reset_password
-api/change_password
+Client-facing API routes. Ops-portal routes (user approval, entitlements, ...)
+live in api/ops_routes.py.
 
-# portfolio 
-api/upload_portfolio
-api/delete_portfolios {PORT_ID_LIST}
-api/get_dashboard
-api/download
-api/download_file
+# register and login
+POST   api/register                     {firstName, lastName, email, companyName}
+POST   api/login                        {username, password}
+GET    api/verify_token/<token>
+POST   api/forget_password              {email}
+POST   api/reset_password
+POST   api/change_password
+
+# portfolio (legacy upload/download)
+POST   api/upload_portfolio
+POST   api/delete_portfolios            {PORT_ID_LIST}
+POST   api/get_dashboard
+GET    api/download/<group_id>/<filename>
+GET    api/download_file/<filename>
 
 # support
-api/user_approval/data
-api/user_approval/update
-api/get_entitlement
-api/get_entitlement_1client
-api/update_entitlement
-api/upload_security
-api/get_upload_security
-api/sup_download
-api/rerun_portfolio/<port_id>
-api/run_account/<account_id>/<as_of_date>
+POST   api/upload_security
+POST   api/get_upload_security
+GET    api/sup_download/<category>/<filename>
+GET    api/rerun_portfolio/<port_id>
+GET    api/run_account/<account_id>/<as_of_date>
 
-# miscellaneouse
-api/schduleDemo
-api/set_sso_cookie
+# impersonation (superadmin)
+POST   api/impersonate/<target_username>
+GET    api/impersonate/whoami
+
+# dashboard: summary
+GET    api/summary/metrics
+GET    api/summary/chart/<range_key>
+GET    api/summary/portfolio
+GET    api/summary/risk
+GET    api/summary/allocation
+GET    api/summary/brokers
+GET    api/summary/concentrations
+GET    api/summary/top_risk
+GET    api/summary/gauges
+
+# dashboard: risk
+GET    api/risk/parameters
+GET    api/risk/summary
+GET    api/risk/contributions
+GET    api/risk/concentrations
+GET    api/risk/asset_allocation
+GET    api/risk/asset
+GET    api/risk/industry
+GET    api/risk/region
+GET    api/risk/currency
+GET    api/risk/risk_metrics
+GET    api/risk/risk_adjusted_return
+GET    api/risk/top_risks
+GET    api/risk/var_history
+GET    api/risk/factors
+GET    api/risk/alerts
+GET    api/security-level
+GET    api/alternatives/summary
+GET    api/stress/scenarios
+
+# dashboard: settings
+GET    api/settings/parameters
+PUT    api/settings/parameters
+GET    api/settings/limits
+PUT    api/settings/limits
+GET    api/settings/presets
+
+# dashboard: misc
+GET    api/historical
+GET    api/accounts
+GET    api/dashboard/message
+
+# dashboard: holdings
+GET    api/holdings/summary
+GET    api/holdings/positions
+GET    api/holdings/chart/<range_key>
+GET    api/holdings/allocation
+
+# portfolios page
+GET    api/portfolios
+POST   api/portfolios/upload
+DELETE api/portfolios/<pid>
+GET    api/portfolios/<pid>/download
+POST   api/portfolios/<port_id>/clone
+GET    api/portfolios/tracked
+GET    api/portfolios/adhoc
+GET    api/position-history
+
+# broker connections
+GET    api/broker/settings
+DELETE api/broker/settings/<sid>
+GET    api/broker/feeds
+POST   api/broker/request-auth
+
+# what-if
+GET    api/whatif/portfolios
+GET    api/whatif/portfolio/<port_id>/allocations
+POST   api/whatif/portfolio/<port_id>/metrics
+GET    api/whatif/alternatives/positions
+GET    api/whatif/alternatives/panel
+POST   api/whatif/alternatives/calculate
+
+# miscellaneous
+POST   api/requestDemo
+POST   api/scheduleDemo
+POST   api/set_sso_cookie
 
 # legacy
-/api/data_request
-/api/calculate
-/api/add_security
-/api/risk_calculator
-/api/test
-
-
+POST   api/data_request
+POST   api/calculate
+POST   api/add_security
+POST   api/risk_calculator
+POST   api/test
 
 """
 import requests

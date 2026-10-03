@@ -66,7 +66,7 @@ import psycopg2
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from _paths import CSV_DIR, EXCEL_DIR
 
-DEFAULT_FILE = 'input_template.xlsx'
+DEFAULT_FILE = 'portfolio.xlsx'
 
 _SUMMARY_METRICS = [
     ('Portfolio Std',    'mg_std'),

@@ -1,8 +1,11 @@
 """
 calc_options.py — Price stock/VIX options listed in an Excel file.
 
-Reads an options list CSV from data/maintenance/CSV (default: the newest
-*_options_*.csv, as written by maintenance/calc_portfolio_var.py) and prices each row via Black-Scholes, reusing the same
+1. Reads an options list CSV from data/maintenance/CSV (default: the newest *_options_*.csv, output file from maintenance/calc_portfolio_var.py)
+2. Calculates price and greeks and saves to a csv file
+3. Calculates P/L distributions and saves to security_pnl.h5 if it does not exist
+
+Prices each row via Black-Scholes, reusing the same
 approach as check_port_positions.py / process2/calc_options_pnl.py:
 engine/eq_option_var.py::calc_price(), tenor from maturity, risk-free rate
 from models/ust_curve.py::get_rate(), underlying price from current_price.

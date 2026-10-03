@@ -3,31 +3,35 @@ as_of_date
 │   └── mssb_upload
 │       ├── mssb_archive
 │       └── mssb_preprocess
-│           └── consolidate_positions        ◄ also: tracked_proc
-│               └── calc_option_price        ◄ also: load_option_iv, tr_extract
-│                   └── pnl_derivative  ★ (see below)
-├── pnl_linear_prod
-│   └── pnl_treasury                         ◄ also: tr_extract
-│       └── pnl_bond
-│           └── pnl_derivative …
+│           └── consolidate_positions      ◄ also: tracked_proc
+│               ├── calc_option_price      ◄ also: load_option_iv, tr_extract
+│               │   └── pnl_derivative  ★ (see below)
+│               ├── update_current_security
+│               │   └── pnl_linear_prod    ◄ also: as_of_date
+│               │       └── pnl_treasury   ◄ also: tr_extract
+│               │           └── pnl_bond
+│               │               └── pnl_derivative …
+│               └── pnl_derivative …
 ├── yh_eod_price [20:30]
 │   ├── calc_benchmark
-│   ├── load_option_iv                       ◄ also: as_of_date
+│   ├── load_option_iv                     ◄ also: as_of_date
 │   │   └── calc_option_price …
-│   ├── tracked_proc                         ◄ also: tr_extract
+│   ├── tracked_proc                       ◄ also: tr_extract
 │   │   └── consolidate_positions …
 │   └── pnl_derivative …
-└── tr_extract [21:00]
-    ├── pnl_treasury …
-    ├── tracked_proc …
-    ├── calc_option_price …
-    └── pnl_derivative …
+├── tr_extract [21:00]
+│   ├── tracked_proc …
+│   ├── calc_option_price …
+│   ├── pnl_treasury …
+│   └── pnl_derivative …
+├── load_option_iv …
+└── pnl_linear_prod …
 
-★ pnl_derivative   ◄ needs: pnl_bond, consolidate_positions, calc_option_price, yh_eod_price, tr_extract
-├── purge_pnl_stat
-└── pnl_alternative_unadj
-    └── calc_beta
-        └── calculate_var
-            ├── alternative_var
-            ├── dashboard_process
-            └── stress_test
+★ pnl_derivative                           ◄ needs: pnl_bond, consolidate_positions, yh_eod_price, tr_extract, calc_option_price
+├── pnl_alternative_unadj
+│   └── calc_beta
+│       └── calculate_var
+│           ├── alternative_var
+│           ├── dashboard_process
+│           └── stress_test
+└── purge_pnl_stat
