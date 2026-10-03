@@ -72,5 +72,6 @@ with app.app_context():
 
 from api import routes
 from api import ops_routes
+from api import maintenance_routes
 
     
