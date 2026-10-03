@@ -1,13 +1,13 @@
 """
-save_dist.py — Save a return distribution CSV into the VaR HDF store.
+dist_save.py — Save a return distribution CSV into the VaR HDF store.
 
 Reads a distribution CSV from data/maintenance/CSV/, sets the target model, and
 calls var_utils.save_dist() to write it into the model's .h5 file.
 
 Usage:
-    python save_dist.py dist.csv
-    python save_dist.py dist.csv --model M_20251231
-    python save_dist.py dist.csv --model M_20251231 --category PRICE
+    python dist_save.py dist.csv
+    python dist_save.py dist.csv --model M_20251231
+    python dist_save.py dist.csv --model M_20251231 --category PRICE
 
 Arguments:
     file        CSV filename inside data/maintenance/CSV/   (required)
@@ -31,7 +31,7 @@ from _paths import CSV_DIR
 
 
 def _setup_logger() -> logging.Logger:
-    logger = logging.getLogger("save_dist")
+    logger = logging.getLogger("dist_save")
     logger.setLevel(logging.DEBUG)
     handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(
@@ -69,9 +69,9 @@ def main() -> None:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "Examples:\n"
-            "  python save_dist.py dist.csv\n"
-            "  python save_dist.py dist.csv --model M_20251231\n"
-            "  python save_dist.py dist.csv --model M_20251231 --category PRICE\n"
+            "  python dist_save.py dist.csv\n"
+            "  python dist_save.py dist.csv --model M_20251231\n"
+            "  python dist_save.py dist.csv --model M_20251231 --category PRICE\n"
         ),
     )
     parser.add_argument("file",       metavar="FILE",

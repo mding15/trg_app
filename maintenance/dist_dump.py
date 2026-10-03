@@ -1,15 +1,15 @@
 """
-dump_dist.py — Dump security PnL distributions from the VaR HDF store to CSV.
+dist_dump.py — Dump security PnL distributions from the VaR HDF store to CSV.
 
 Reads a list of security IDs from a CSV file, fetches their distributions via
 var_utils.get_dist(), and writes the result to data/maintenance/CSV/dist.{category}.csv.
 
 Usage:
-    python dump_dist.py
-    python dump_dist.py --category IR
-    python dump_dist.py --input data/maintenance/CSV/security_ids.csv --category SPREAD
-    python dump_dist.py --dry-run
-    python dump_dist.py --list
+    python dist_dump.py
+    python dist_dump.py --category IR
+    python dist_dump.py --input data/maintenance/CSV/security_ids.csv --category SPREAD
+    python dist_dump.py --dry-run
+    python dist_dump.py --list
 
 Options:
     --input     Path to CSV with security IDs (default: data/maintenance/CSV/security_ids.csv)
@@ -36,7 +36,7 @@ DEFAULT_INPUT = CSV_DIR / "security_ids.csv"
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _setup_logger() -> logging.Logger:
-    logger = logging.getLogger("dump_dist")
+    logger = logging.getLogger("dist_dump")
     logger.setLevel(logging.DEBUG)
     handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(
@@ -128,11 +128,11 @@ def main() -> None:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "Examples:\n"
-            "  python dump_dist.py\n"
-            "  python dump_dist.py --category IR\n"
-            "  python dump_dist.py --input data/maintenance/CSV/my_ids.csv --category SPREAD\n"
-            "  python dump_dist.py --dry-run\n"
-            "  python dump_dist.py --list\n"
+            "  python dist_dump.py\n"
+            "  python dist_dump.py --category IR\n"
+            "  python dist_dump.py --input data/maintenance/CSV/my_ids.csv --category SPREAD\n"
+            "  python dist_dump.py --dry-run\n"
+            "  python dist_dump.py --list\n"
         ),
     )
     parser.add_argument(
